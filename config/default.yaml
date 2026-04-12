@@ -1,0 +1,36 @@
+data:
+  k: 3               # number of target qubits
+  n: 10              # total system qubits
+  n_blocks: 1000     # number of blocks per instance
+  shots_per_block: 10
+  n_train: 8000      # training instances
+  n_val: 1000        # validation instances
+  n_test: 1000       # test instances
+  n_cal: 500         # conformal calibration instances (drawn from test set)
+  target_depth: 4    # base depth for target circuit; decoys sampled from U(0.75d, 1.25d)
+
+model:
+  d_model: 64        # transformer embedding dimension
+  n_heads: 4         # number of attention heads (must divide d_model)
+  n_layers: 2        # number of transformer encoder layers
+  d_ff: 128          # feed-forward hidden dimension within each encoder layer
+  dropout: 0.1
+
+ensemble:
+  M: 10              # number of independent ensemble members
+
+training:
+  lr: 1.0e-3
+  batch_size: 64
+  epochs: 100
+  weight_decay: 1.0e-4
+  patience: 10       # early stopping patience (epochs without val improvement)
+  seed_base: 42      # ensemble member m uses seed = seed_base + m
+
+conformal:
+  alpha: 0.05        # miscoverage level; produces 95% coverage guarantee
+
+paths:
+  data_dir: data/processed
+  checkpoint_dir: checkpoints
+  results_dir: results
