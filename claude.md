@@ -5,6 +5,7 @@ ML model for target probability distribution recovery within the context of bits
 
 ## My Preferences & Rules
 - Always ask any clarifying questions
+- For running scripts, always use python3 (not python)
 - Never make design decisions without consulting me. If there are various options, present them clearly with tradeoffs.
 - For large tasks, use sub-agents with cleanly divided and defined responsibilities.
 - If you have any lingering uncertainties at any time, they must be stated explicitly.

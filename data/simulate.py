@@ -31,6 +31,7 @@ with a thin wrapper around your existing function.
 from __future__ import annotations
 
 import numpy as np
+from joblib import Parallel, delayed
 
 from utils.circuits import (
     random_circuit,
@@ -61,7 +62,29 @@ def random_decoy_partition(
         List of 1-D int arrays, each containing the qubit indices of one decoy
         group. The union of all groups equals ``available_qubits``.
     """
-    ...
+    shuffled = rng.permutation(available_qubits)
+    D = len(shuffled)
+
+    groups: list[np.ndarray] = []
+    current: list[int] = []
+
+    # D-1 independent coin flips determine whether to cut after each qubit
+    # except the last (the last qubit always ends the final group).
+    # rng.integers upper bound is exclusive, so [0, 2^(D-1)) covers all
+    # possible split patterns uniformly.
+    if D > 1:
+        splits = int(rng.integers(0, 1 << (D - 1)))
+    else:
+        splits = 0
+
+    for i, qubit in enumerate(shuffled):
+        current.append(int(qubit))
+        if i < D - 1 and (splits >> i) & 1:
+            groups.append(np.array(current, dtype=int))
+            current = []
+
+    groups.append(np.array(current, dtype=int))
+    return groups
 
 
 def generate_instance(
@@ -84,8 +107,9 @@ def generate_instance(
         n: Total system qubits.
         n_blocks: Number of blocks (default 1000).
         shots_per_block: Shots per block (default 10).
-        target_depth: Base circuit depth. Decoy depths are sampled uniformly
-            from ``[0.75 * target_depth, 1.25 * target_depth]``.
+        target_depth: Base circuit depth. Decoy depths are sampled per block via
+            ``randint(int(target_depth * 0.75), int(target_depth * 1.25))``
+            (inclusive on both ends), with ``max_operands=2``.
         seed: Optional RNG seed for full reproducibility of this instance.
 
     Returns:
@@ -99,7 +123,62 @@ def generate_instance(
         - ``"target_positions"``: int array of shape ``(n_blocks, k)`` — target
           qubit indices per block (retained for oracle marginal extraction).
     """
-    ...
+    rng = np.random.default_rng(seed)
+
+    # Seed stream: reserve one seed for the target circuit, then one per block
+    # for decoy circuit generation and shot sampling.
+    target_circuit_seed = int(rng.integers(0, 2**31))
+    target_circuit = random_circuit(k, target_depth, seed=target_circuit_seed)
+    p_star = statevector_distribution(target_circuit)
+
+    depth_lo = int(target_depth * 0.75)
+    depth_hi = int(target_depth * 1.25)
+
+    bitstrings = np.empty((n_blocks, shots_per_block, n), dtype=np.uint8)
+    target_positions_all = np.empty((n_blocks, k), dtype=int)
+
+    for b in range(n_blocks):
+        # Per-block RNG state derived deterministically from the instance rng.
+        block_seed = int(rng.integers(0, 2**31))
+        block_rng = np.random.default_rng(block_seed)
+
+        # Sample target qubit positions for this block.
+        target_pos = block_rng.choice(n, size=k, replace=False)
+        target_positions_all[b] = target_pos
+
+        # Sample target bits from the fixed target distribution.
+        target_shot_seed = int(block_rng.integers(0, 2**31))
+        target_bits = sample_shots(p_star, shots_per_block, seed=target_shot_seed)
+
+        # Partition remaining qubits into decoy groups.
+        available = np.array([q for q in range(n) if q not in set(target_pos.tolist())])
+        decoy_groups = random_decoy_partition(available, block_rng)
+
+        # Generate and sample each decoy group independently.
+        decoy_bits_list = []
+        decoy_positions_list = []
+        for group in decoy_groups:
+            g = len(group)
+            decoy_depth = int(block_rng.integers(depth_lo, depth_hi + 1))
+            decoy_seed = int(block_rng.integers(0, 2**31))
+            decoy_circuit = random_circuit(g, decoy_depth, seed=decoy_seed)
+            p_decoy = statevector_distribution(decoy_circuit)
+            decoy_shot_seed = int(block_rng.integers(0, 2**31))
+            decoy_bits_list.append(sample_shots(p_decoy, shots_per_block, seed=decoy_shot_seed))
+            decoy_positions_list.append(group)
+
+        bitstrings[b] = interleave_bitstrings(
+            target_bits, decoy_bits_list, target_pos, decoy_positions_list, n
+        )
+
+    features = compute_block_features(bitstrings, n, k)
+
+    return {
+        "features": features,
+        "p_star": p_star,
+        "bitstrings": bitstrings,
+        "target_positions": target_positions_all,
+    }
 
 
 def generate_dataset(
@@ -136,7 +215,17 @@ def generate_dataset(
         - ``"bitstrings"``: shape ``(n_instances, n_blocks, shots_per_block, n)``, uint8
         - ``"target_positions"``: shape ``(n_instances, n_blocks, k)``, int
     """
-    ...
+    results = Parallel(n_jobs=n_jobs)(
+        delayed(generate_instance)(k, n, n_blocks, shots_per_block, target_depth, seed=seed_base + i)
+        for i in range(n_instances)
+    )
+
+    return {
+        "features":         np.stack([r["features"] for r in results]),
+        "p_stars":          np.stack([r["p_star"] for r in results]),
+        "bitstrings":       np.stack([r["bitstrings"] for r in results]),
+        "target_positions": np.stack([r["target_positions"] for r in results]),
+    }
 
 
 def save_dataset(dataset: dict[str, np.ndarray], path: str) -> None:
@@ -146,7 +235,7 @@ def save_dataset(dataset: dict[str, np.ndarray], path: str) -> None:
         dataset: Dict returned by ``generate_dataset``.
         path: File path ending in ``.npz``.
     """
-    ...
+    np.savez_compressed(path, **dataset)
 
 
 def load_dataset(path: str) -> dict[str, np.ndarray]:
@@ -158,4 +247,5 @@ def load_dataset(path: str) -> dict[str, np.ndarray]:
     Returns:
         Dict with the same keys as produced by ``generate_dataset``.
     """
-    ...
+    data = np.load(path)
+    return {k: data[k] for k in data.files}

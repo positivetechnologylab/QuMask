@@ -9,16 +9,16 @@ from __future__ import annotations
 
 import numpy as np
 from qiskit import QuantumCircuit
-from qiskit_aer import AerSimulator
+from qiskit.circuit.random import random_circuit as _qiskit_random_circuit
 from qiskit.quantum_info import Statevector
 
 
 def random_circuit(n_qubits: int, depth: int, seed: int | None = None) -> QuantumCircuit:
     """Generate a random quantum circuit on ``n_qubits`` qubits at the given depth.
 
-    The gate set is drawn from a fixed universal set (Ry, CNOT) to keep circuits
-    physically plausible and parameterically diverse. Gate targets at each layer
-    are sampled uniformly at random.
+    Wraps Qiskit's built-in random circuit generator, which draws from a broad
+    universal gate set (U-gates, CX, CCX, etc.). Gate targets at each layer are
+    sampled uniformly at random.
 
     Args:
         n_qubits: Number of qubits in the circuit.
@@ -29,7 +29,9 @@ def random_circuit(n_qubits: int, depth: int, seed: int | None = None) -> Quantu
     Returns:
         A Qiskit ``QuantumCircuit`` with no measurement gates (statevector-ready).
     """
-    ...
+    if depth == 0:
+        return QuantumCircuit(n_qubits)
+    return _qiskit_random_circuit(n_qubits, depth, measure=False, seed=seed)
 
 
 def statevector_distribution(circuit: QuantumCircuit) -> np.ndarray:
@@ -46,7 +48,8 @@ def statevector_distribution(circuit: QuantumCircuit) -> np.ndarray:
         Index ``i`` corresponds to the basis state whose binary representation
         is ``i`` (Qiskit's little-endian qubit ordering).
     """
-    ...
+    sv = Statevector.from_instruction(circuit)
+    return sv.probabilities()
 
 
 def sample_shots(distribution: np.ndarray, n_shots: int, seed: int | None = None) -> np.ndarray:
@@ -62,7 +65,10 @@ def sample_shots(distribution: np.ndarray, n_shots: int, seed: int | None = None
         Each row is one sampled bitstring, with qubit 0 in column 0
         (consistent with Qiskit's little-endian convention).
     """
-    ...
+    rng = np.random.default_rng(seed)
+    n_qubits = int(np.log2(len(distribution)))
+    indices = rng.choice(len(distribution), size=n_shots, p=distribution)
+    return ((indices[:, None] >> np.arange(n_qubits)) & 1).astype(np.uint8)
 
 
 def interleave_bitstrings(
@@ -92,4 +98,26 @@ def interleave_bitstrings(
     Returns:
         Int array of shape ``(n_shots, n)`` with values in {0, 1}.
     """
-    ...
+    n_shots = target_bits.shape[0]
+    out = np.empty((n_shots, n), dtype=np.uint8)
+    out[:, target_positions] = target_bits
+    for bits, positions in zip(decoy_bits_list, decoy_positions_list):
+        out[:, positions] = bits
+    return out
+
+
+def noisy_distribution(circuit: QuantumCircuit, noise_model) -> np.ndarray:
+    """NOT IMPLEMENTED. Placeholder for AerSimulator-based noisy simulation.
+
+    Args:
+        circuit: A Qiskit ``QuantumCircuit`` with no measurement gates.
+        noise_model: A ``qiskit_aer.noise.NoiseModel`` instance.
+
+    Returns:
+        Float64 numpy array of shape ``(2**n_qubits,)`` — noisy Born probabilities.
+    """
+    from qiskit_aer import AerSimulator  # noqa: F401
+    raise NotImplementedError(
+        "noisy_distribution requires a noise model and AerSimulator; "
+        "not wired up yet."
+    )

@@ -95,14 +95,14 @@ def tiny_instance(k, n) -> dict:
           bitstrings (10,10,10) uint8, target_positions (10,3) int.
     """
     from data.simulate import generate_instance
-    return generate_instance(k=k, n=n, n_blocks=10, shots_per_block=10, seed=0)
+    return generate_instance(k=k, n=n, n_blocks=10, shots_per_block=10, target_depth=4, seed=0)
 
 
 @pytest.fixture(scope="session", params=[0, 1, 2])
 def tiny_instance_varied(k, n, request) -> dict:
     """Three tiny instances (seeds 0, 1, 2) — tests using this run once per seed."""
     from data.simulate import generate_instance
-    return generate_instance(k=k, n=n, n_blocks=10, shots_per_block=10, seed=request.param)
+    return generate_instance(k=k, n=n, n_blocks=10, shots_per_block=10, target_depth=4, seed=request.param)
 
 
 @pytest.fixture(scope="session")
