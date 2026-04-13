@@ -31,7 +31,7 @@ def tvd(p: np.ndarray, q: np.ndarray) -> float:
     Returns:
         Scalar in [0, 1]. 0 means identical distributions.
     """
-    ...
+    return 0.5 * np.sum(np.abs(p - q))
 
 
 def kl_divergence(p: np.ndarray, q: np.ndarray, eps: float = 1e-12) -> float:
@@ -52,7 +52,8 @@ def kl_divergence(p: np.ndarray, q: np.ndarray, eps: float = 1e-12) -> float:
     Returns:
         Non-negative scalar. Unbounded above.
     """
-    ...
+    mask = p > 0
+    return float(np.sum(p[mask] * np.log(p[mask] / (q[mask] + eps))))
 
 
 def ece(
@@ -77,7 +78,24 @@ def ece(
     Returns:
         Non-negative scalar. Lower is better; 0 means perfect calibration.
     """
-    ...
+    # Flatten to (N * 2**k,) element-wise: each (prediction, sigma) pair is one sample
+    pred = p_hats.ravel()
+    true = p_stars.ravel()
+    sigma = sigmas.ravel()
+
+    # Use sigma as the "confidence" axis for binning
+    bin_edges = np.linspace(0.0, sigma.max(), n_bins + 1)
+    total = len(pred)
+    ece_val = 0.0
+    for i, (lo, hi) in enumerate(zip(bin_edges[:-1], bin_edges[1:])):
+        last_bin = i == n_bins - 1
+        mask = (sigma >= lo) & (sigma <= hi if last_bin else sigma < hi)
+        if not mask.any():
+            continue
+        expected_err = sigma[mask].mean()
+        observed_err = np.abs(pred[mask] - true[mask]).mean()
+        ece_val += mask.sum() / total * abs(expected_err - observed_err)
+    return float(ece_val)
 
 
 def empirical_marginal(
@@ -103,7 +121,28 @@ def empirical_marginal(
         Float64 array of shape ``(2**k,)`` summing to 1. Index ``i`` corresponds
         to the k-bit string whose integer value is ``i``.
     """
-    ...
+    # Flatten to (total_shots, n)
+    bits = bitstrings.reshape(-1, bitstrings.shape[-1])
+    total_shots = bits.shape[0]
+
+    counts = np.zeros(2**k, dtype=np.float64)
+
+    if target_positions.ndim == 1:
+        # Same positions for every shot
+        extracted = bits[:, target_positions]  # (total_shots, k)
+        powers = 1 << np.arange(k - 1, -1, -1)
+        indices = extracted @ powers
+        np.add.at(counts, indices, 1)
+    else:
+        # Per-block positions: target_positions is (n_blocks, k)
+        n_blocks, shots_per_block = bitstrings.shape[:2]
+        powers = 1 << np.arange(k - 1, -1, -1)
+        for b in range(n_blocks):
+            extracted = bits[b * shots_per_block:(b + 1) * shots_per_block, target_positions[b]]
+            indices = extracted @ powers
+            np.add.at(counts, indices, 1)
+
+    return counts / total_shots
 
 
 def compute_all_metrics(
@@ -130,4 +169,12 @@ def compute_all_metrics(
         - ``"entropy_true"``: Shannon entropy of p* (instance difficulty proxy)
         - ``"conformal_radius"``: conformal TV-ball radius (if provided)
     """
-    ...
+    result: dict[str, float] = {
+        "tvd_adv": tvd(p_hat, p_hat_marginal),
+        "tvd_true": tvd(p_hat, p_star),
+        "kl_true": kl_divergence(p_star, p_hat),
+        "entropy_true": float(-np.sum(p_star * np.log(p_star + 1e-12))),
+    }
+    if conformal_radius is not None:
+        result["conformal_radius"] = conformal_radius
+    return result

@@ -31,10 +31,13 @@ For k=3, n=10: F = C(10,1) + C(10,2) + C(10,3) = 10 + 45 + 120 = 175
 
 from __future__ import annotations
 
+import warnings
 from functools import lru_cache
 from itertools import combinations
 
 import numpy as np
+
+CORRELATOR_MEMORY_WARN_BYTES = 500 * 1024 * 1024  # 500 MB
 
 
 @lru_cache(maxsize=32)
@@ -52,7 +55,10 @@ def get_all_subsets(n: int, k: int) -> list[tuple[int, ...]]:
         List of tuples, each a sorted tuple of qubit indices. Length equals
         F = Σⱼ₌₁ᵏ C(n, j).
     """
-    ...
+    subsets = []
+    for m in range(1, k + 1):
+        subsets.extend(combinations(range(n), m))
+    return subsets
 
 
 def feature_dim(n: int, k: int) -> int:
@@ -65,7 +71,7 @@ def feature_dim(n: int, k: int) -> int:
     Returns:
         Integer feature dimension.
     """
-    ...
+    return len(get_all_subsets(n, k))
 
 
 def compute_correlators(bitstrings: np.ndarray, n: int, k: int) -> np.ndarray:
@@ -85,7 +91,29 @@ def compute_correlators(bitstrings: np.ndarray, n: int, k: int) -> np.ndarray:
         Float32 array of shape ``(F,)`` with values in [−1, 1].
         Ordering matches ``get_all_subsets(n, k)``.
     """
-    ...
+    z = 1 - 2 * bitstrings.astype(np.float32)  # (shots, n)
+    shots = z.shape[0]
+    subsets = get_all_subsets(n, k)
+    correlators = np.empty(len(subsets), dtype=np.float32)
+    offset = 0
+    for m in range(1, k + 1):
+        group = [s for s in subsets if len(s) == m]
+        if not group:
+            continue
+        nbytes = shots * len(group) * m * 4
+        if nbytes > CORRELATOR_MEMORY_WARN_BYTES:
+            warnings.warn(
+                f"compute_correlators: order-{m} allocation is "
+                f"{nbytes / 1024**2:.0f} MB (threshold "
+                f"{CORRELATOR_MEMORY_WARN_BYTES // 1024**2} MB). "
+                f"n={n}, k={k}, shots={shots}.",
+                ResourceWarning,
+                stacklevel=2,
+            )
+        idx = np.array(group)  # (C(n,m), m)
+        correlators[offset : offset + len(group)] = z[:, idx].prod(axis=2).mean(axis=0)
+        offset += len(group)
+    return correlators
 
 
 def compute_block_features(
@@ -108,4 +136,9 @@ def compute_block_features(
     Returns:
         Float32 array of shape ``(n_blocks, F)``.
     """
-    ...
+    n_blocks = bitstrings_blocked.shape[0]
+    F = feature_dim(n, k)
+    features = np.empty((n_blocks, F), dtype=np.float32)
+    for b in range(n_blocks):
+        features[b] = compute_correlators(bitstrings_blocked[b], n, k)
+    return features
