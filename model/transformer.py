@@ -29,7 +29,7 @@ representations. Scale up only if the validation loss plateaus early.
 
     Config  | d_model | n_heads | n_layers | d_ff | ~Params
     --------|---------|---------|----------|------|---------
-    Small   |   64    |    4    |    2     |  128 |  ~200k
+    Small   |   64    |    4    |    2     |  128 |   ~88k
     Medium  |  128    |    4    |    4     |  256 |  ~800k
     Large   |  256    |    8    |    6     |  512 |   ~3M
 """
@@ -67,7 +67,22 @@ class QuMaskTransformer(nn.Module):
         d_ff: int = 128,
         dropout: float = 0.1,
     ) -> None:
-        ...
+        super().__init__()
+        self.input_proj = nn.Linear(F, d_model)
+        encoder_layer = nn.TransformerEncoderLayer(
+            d_model=d_model,
+            nhead=n_heads,
+            dim_feedforward=d_ff,
+            dropout=dropout,
+            batch_first=True,
+        )
+        self.encoder = nn.TransformerEncoder(encoder_layer, num_layers=n_layers)
+        self.output_head = nn.Sequential(
+            nn.Linear(d_model, d_ff),
+            nn.ReLU(),
+            nn.Dropout(dropout),
+            nn.Linear(d_ff, output_dim),
+        )
 
     def forward(self, x: Tensor) -> Tensor:
         """Forward pass.
@@ -83,12 +98,16 @@ class QuMaskTransformer(nn.Module):
             the KL loss — use ``torch.nn.functional.kl_div`` with ``log_target=False``
             and ``log_softmax`` applied to the logits instead.
         """
-        ...
+        x = self.input_proj(x)          # (batch, n_blocks, d_model)
+        x = self.encoder(x)             # (batch, n_blocks, d_model)
+        x = x.mean(dim=1)              # (batch, d_model)
+        return self.output_head(x)      # (batch, output_dim)
+
 
     @property
     def n_parameters(self) -> int:
         """Return the total number of trainable parameters."""
-        ...
+        return sum(p.numel() for p in self.parameters() if p.requires_grad)
 
 
 def build_model_from_config(cfg: dict) -> QuMaskTransformer:
@@ -104,4 +123,12 @@ def build_model_from_config(cfg: dict) -> QuMaskTransformer:
     Returns:
         An uninitialized (randomly weighted) ``QuMaskTransformer``.
     """
-    ...
+    from data.features import feature_dim
+
+    n = cfg["data"]["n"]
+    k = cfg["data"]["k"]
+    return QuMaskTransformer(
+        F=feature_dim(n, k),
+        output_dim=2 ** k,
+        **cfg["model"],
+    )

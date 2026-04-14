@@ -44,7 +44,15 @@ def marginal_for_subset(
         Float64 array of shape ``(2**k,)`` summing to 1. Index ``i`` is the
         frequency of the k-bit string whose integer value is ``i``.
     """
-    ...
+    k = len(qubit_subset)
+    # Flatten to (total_shots, n), extract subset columns
+    bits = bitstrings_blocked.reshape(-1, bitstrings_blocked.shape[-1])
+    extracted = bits[:, list(qubit_subset)]  # (total_shots, k)
+    # MSB-first: qubit_subset[0] is the most significant bit
+    powers = 1 << np.arange(k - 1, -1, -1)
+    indices = extracted @ powers
+    counts = np.bincount(indices, minlength=2**k).astype(np.float64)
+    return counts / bits.shape[0]
 
 
 def cross_block_variance(
@@ -65,7 +73,21 @@ def cross_block_variance(
     Returns:
         Non-negative scalar. Lower = more consistent across blocks.
     """
-    ...
+    k = len(qubit_subset)
+    n_blocks, shots_per_block, _ = bitstrings_blocked.shape
+    cols = list(qubit_subset)
+    powers = 1 << np.arange(k - 1, -1, -1)
+
+    # block_marginals[b] = empirical marginal for block b
+    block_marginals = np.empty((n_blocks, 2**k), dtype=np.float64)
+    for b in range(n_blocks):
+        extracted = bitstrings_blocked[b][:, cols]  # (shots_per_block, k)
+        indices = extracted @ powers
+        counts = np.bincount(indices, minlength=2**k).astype(np.float64)
+        block_marginals[b] = counts / shots_per_block
+
+    # Mean over bins of per-bin variance across blocks
+    return float(np.mean(np.var(block_marginals, axis=0)))
 
 
 def variance_baseline(
@@ -94,7 +116,20 @@ def variance_baseline(
         - ``"all_variances"``: dict mapping subset tuple → variance score,
           for diagnostic inspection.
     """
-    ...
+    all_variances: dict[tuple[int, ...], float] = {}
+    for subset in combinations(range(n), k):
+        all_variances[subset] = cross_block_variance(bitstrings_blocked, subset)
+
+    selected_subset = min(all_variances, key=all_variances.__getitem__)
+    variance_score = all_variances[selected_subset]
+    p_hat_baseline = marginal_for_subset(bitstrings_blocked, selected_subset)
+
+    return {
+        "p_hat_baseline": p_hat_baseline,
+        "selected_subset": selected_subset,
+        "variance_score": variance_score,
+        "all_variances": all_variances,
+    }
 
 
 def run_baseline_on_dataset(
@@ -120,4 +155,32 @@ def run_baseline_on_dataset(
         - ``"tvd_true"``: shape ``(N,)`` — TV(p̂_baseline, p*) per instance
         - ``"selected_subsets"``: list of N tuples
     """
-    ...
+    from utils.metrics import tvd, empirical_marginal
+
+    data = np.load(dataset_path)
+    bitstrings_all = data["bitstrings"]       # (N, n_blocks, shots_per_block, n)
+    p_stars = data["p_stars"]                 # (N, 2**k)
+    target_positions_all = data["target_positions"]  # (N, n_blocks, k)
+
+    N = bitstrings_all.shape[0]
+    p_hat_baselines = np.empty((N, 2**k), dtype=np.float64)
+    tvd_adv = np.empty(N, dtype=np.float64)
+    tvd_true = np.empty(N, dtype=np.float64)
+    selected_subsets = []
+
+    for i in range(N):
+        result = variance_baseline(bitstrings_all[i], k, n)
+        p_hat = result["p_hat_baseline"]
+        p_hat_baselines[i] = p_hat
+        selected_subsets.append(result["selected_subset"])
+
+        p_hat_marginal = empirical_marginal(bitstrings_all[i], target_positions_all[i], k)
+        tvd_adv[i] = tvd(p_hat, p_hat_marginal)
+        tvd_true[i] = tvd(p_hat, p_stars[i])
+
+    return {
+        "p_hat_baselines": p_hat_baselines,
+        "tvd_adv": tvd_adv,
+        "tvd_true": tvd_true,
+        "selected_subsets": selected_subsets,
+    }

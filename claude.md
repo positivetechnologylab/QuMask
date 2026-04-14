@@ -14,7 +14,10 @@ ML model for target probability distribution recovery within the context of bits
 - Don't commit unless explicitly asked
 - Less code is better than more code.
 - Fallback mechanisms generally hide real failures and should be avoided unless explicitly necessary, in which case you must defend why that's the case.
-- When writing tests, be especially sensitive to edge cases, and particularly those involving indexing
+- When writing tests, be especially sensitive to edge cases, and particularly those involving indexing.
+- Avoid mixing scalar, slice, and list indices in a single numpy index expression (e.g. `a[scalar, :, list]`). This triggers advanced indexing broadcast rules and transposes the result unexpectedly. Use two-step indexing instead: `a[scalar][:, list]`.
+- Use most significant bit first-ordering.
+- When running pytest, always do so within a venv via source .venv/bin/activate. For example, a reasonable testing command would be: source .venv/bin/activate 2>/dev/null || true; which pytest; pytest tests/test_features.py -v 2>&1
 
 
 ## Style
