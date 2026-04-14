@@ -39,6 +39,42 @@ from torch.utils.data import DataLoader
 from model.transformer import QuMaskTransformer
 
 
+def make_optimizer(model: QuMaskTransformer, lr: float, weight_decay: float) -> torch.optim.Optimizer:
+    """Construct the optimizer for a single ensemble member.
+
+    Swap this function to change optimizer type or schedule without touching
+    the training loop.
+
+    Args:
+        model: The model whose parameters will be optimized.
+        lr: Learning rate.
+        weight_decay: L2 regularization coefficient.
+
+    Returns:
+        Configured optimizer.
+    """
+    return torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=weight_decay)
+
+
+def compute_loss(logits: Tensor, p_star: Tensor) -> Tensor:
+    """Compute the training loss from logits and target distribution.
+
+    Swap this function to change the loss without touching the training loop.
+    Current: forward KL — KL(p* ∥ p̂), computed as:
+        kl_div(log_softmax(logits), p_star, reduction='batchmean')
+
+    Args:
+        logits: Raw model output, shape ``(batch, output_dim)``.
+        p_star: Target distribution, shape ``(batch, output_dim)``, sums to 1.
+
+    Returns:
+        Scalar loss tensor.
+    """
+    return nn.functional.kl_div(
+        nn.functional.log_softmax(logits, dim=-1), p_star, reduction="batchmean"
+    )
+
+
 class QuMaskEnsemble:
     """Ensemble of M independent QuMaskTransformer models.
 
@@ -47,12 +83,12 @@ class QuMaskEnsemble:
     """
 
     def __init__(self, models: list[QuMaskTransformer]) -> None:
-        ...
+        self.models = models
 
     @property
     def M(self) -> int:
         """Number of ensemble members."""
-        ...
+        return len(self.models)
 
     def predict(
         self,
@@ -76,7 +112,19 @@ class QuMaskEnsemble:
             - ``"member_preds"``: all members' predictions,
               shape ``(M, batch, 2**k)``, for conformal calibration
         """
-        ...
+        if device is None:
+            device = next(self.models[0].parameters()).device
+        x = x.to(device)
+        preds = []
+        for model in self.models:
+            model.eval()
+            with torch.no_grad():
+                logits = model(x)
+                preds.append(torch.softmax(logits, dim=-1))
+        member_preds = torch.stack(preds, dim=0)  # (M, batch, 2**k)
+        p_hat = member_preds.mean(dim=0)
+        sigma = member_preds.std(dim=0, correction=0)
+        return {"p_hat": p_hat, "sigma": sigma, "member_preds": member_preds}
 
     def save(self, checkpoint_dir: str) -> None:
         """Save all member weights to ``{checkpoint_dir}/member_{m}.pt``.
@@ -84,7 +132,9 @@ class QuMaskEnsemble:
         Args:
             checkpoint_dir: Directory path. Created if it does not exist.
         """
-        ...
+        Path(checkpoint_dir).mkdir(parents=True, exist_ok=True)
+        for m, model in enumerate(self.models):
+            torch.save(model.state_dict(), Path(checkpoint_dir) / f"member_{m}.pt")
 
 
 def train_single_member(
@@ -127,7 +177,52 @@ def train_single_member(
         - History dict with keys ``"train_loss"`` and ``"val_loss"``, each a
           list of per-epoch scalar values.
     """
-    ...
+    torch.manual_seed(seed)
+    model = model.to(device)
+    optimizer = make_optimizer(model, lr=lr, weight_decay=weight_decay)
+
+    best_val_loss = float("inf")
+    best_state = None
+    epochs_no_improve = 0
+    history: dict[str, list[float]] = {"train_loss": [], "val_loss": []}
+
+    for _ in range(epochs):
+        model.train()
+        train_loss = 0.0
+        for features, p_star in train_loader:
+            features, p_star = features.to(device), p_star.to(device)
+            optimizer.zero_grad()
+            logits = model(features)
+            loss = compute_loss(logits, p_star)
+            loss.backward()
+            optimizer.step()
+            train_loss += loss.item() * features.size(0)
+        train_loss /= len(train_loader.dataset)
+
+        model.eval()
+        val_loss = 0.0
+        with torch.no_grad():
+            for features, p_star in val_loader:
+                features, p_star = features.to(device), p_star.to(device)
+                logits = model(features)
+                loss = compute_loss(logits, p_star)
+                val_loss += loss.item() * features.size(0)
+        val_loss /= len(val_loader.dataset)
+
+        history["train_loss"].append(train_loss)
+        history["val_loss"].append(val_loss)
+
+        if val_loss < best_val_loss:
+            best_val_loss = val_loss
+            best_state = {k: v.cpu().clone() for k, v in model.state_dict().items()}
+            epochs_no_improve = 0
+        else:
+            epochs_no_improve += 1
+            if epochs_no_improve >= patience:
+                break
+
+    model.load_state_dict(best_state)
+    return model, history
 
 
 def train_all(
@@ -152,7 +247,35 @@ def train_all(
     Returns:
         Trained ``QuMaskEnsemble`` with all M members loaded.
     """
-    ...
+    from model.transformer import build_model_from_config
+
+    if device is None:
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+    M = cfg["ensemble"]["M"]
+    seed_base = cfg["training"]["seed_base"]
+    tr = cfg["training"]
+    checkpoint_path = Path(checkpoint_dir)
+
+    trained_models = []
+    for m in range(M):
+        model = build_model_from_config(cfg)
+        model, _ = train_single_member(
+            model=model,
+            train_loader=train_loader,
+            val_loader=val_loader,
+            lr=tr["lr"],
+            epochs=tr["epochs"],
+            weight_decay=tr["weight_decay"],
+            patience=tr["patience"],
+            device=device,
+            seed=seed_base + m,
+        )
+        trained_models.append(model)
+
+    ensemble = QuMaskEnsemble(trained_models)
+    ensemble.save(checkpoint_dir)
+    return ensemble
 
 
 def load_ensemble(
@@ -172,4 +295,18 @@ def load_ensemble(
     Returns:
         ``QuMaskEnsemble`` with all members in eval mode.
     """
-    ...
+    from model.transformer import build_model_from_config
+
+    if device is None:
+        device = torch.device("cpu")
+
+    M = cfg["ensemble"]["M"]
+    checkpoint_path = Path(checkpoint_dir)
+    models = []
+    for m in range(M):
+        model = build_model_from_config(cfg)
+        path = checkpoint_path / f"member_{m}.pt"
+        model.load_state_dict(torch.load(path, map_location=device))
+        model.to(device).eval()
+        models.append(model)
+    return QuMaskEnsemble(models)

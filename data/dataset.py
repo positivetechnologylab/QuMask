@@ -46,11 +46,16 @@ class QuMaskDataset(Dataset):
     """
 
     def __init__(self, path: str) -> None:
-        ...
+        data = np.load(path)
+        self.features = data["features"]          # (N, n_blocks, F), float32
+        self.p_stars = data["p_stars"]            # (N, 2**k), float64
+        self.bitstrings = data["bitstrings"]      # (N, n_blocks, shots, n), uint8
+        self.target_positions = data["target_positions"]  # (N, n_blocks, k), int
+        self.n_instances = self.features.shape[0]
 
     def __len__(self) -> int:
         """Return the number of instances in the dataset."""
-        ...
+        return self.n_instances
 
     def __getitem__(self, idx: int) -> tuple[torch.Tensor, torch.Tensor]:
         """Return the (features, p_star) pair for instance ``idx``.
@@ -59,7 +64,10 @@ class QuMaskDataset(Dataset):
             features: Float32 tensor of shape ``(n_blocks, F)``.
             p_star: Float32 tensor of shape ``(2**k,)``.
         """
-        ...
+        return (
+            torch.from_numpy(self.features[idx]),
+            torch.from_numpy(self.p_stars[idx].astype(np.float32)),
+        )
 
     def get_eval_arrays(self, idx: int) -> dict[str, np.ndarray]:
         """Return the raw arrays needed for evaluation-time metric computation.
@@ -76,7 +84,11 @@ class QuMaskDataset(Dataset):
             - ``"target_positions"``: shape ``(n_blocks, k)``, int
             - ``"p_star"``: shape ``(2**k,)``, float64
         """
-        ...
+        return {
+            "bitstrings": self.bitstrings[idx],
+            "target_positions": self.target_positions[idx],
+            "p_star": self.p_stars[idx],
+        }
 
 
 def get_dataloaders(
@@ -105,4 +117,11 @@ def get_dataloaders(
         Tuple of ``(train_loader, val_loader, test_loader)``.
         Train loader shuffles; val and test loaders do not.
     """
-    ...
+    train_ds = QuMaskDataset(train_path)
+    val_ds = QuMaskDataset(val_path)
+    test_ds = QuMaskDataset(test_path)
+    kwargs = dict(batch_size=batch_size, num_workers=num_workers, pin_memory=pin_memory)
+    train_loader = DataLoader(train_ds, shuffle=True, **kwargs)
+    val_loader = DataLoader(val_ds, shuffle=False, **kwargs)
+    test_loader = DataLoader(test_ds, shuffle=False, **kwargs)
+    return train_loader, val_loader, test_loader
