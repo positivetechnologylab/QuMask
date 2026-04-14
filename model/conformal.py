@@ -55,7 +55,9 @@ class ConformalPredictor:
     """
 
     def __init__(self, alpha: float = 0.05) -> None:
-        ...
+        self.alpha = alpha
+        self.radius: float | None = None
+        self.n_cal: int | None = None
 
     def calibrate(
         self,
@@ -69,8 +71,9 @@ class ConformalPredictor:
         nonconformity score TV(p̂, p*) for each, and stores the empirical
         quantile at level (1−α)(1 + 1/N_cal) as ``self.radius``.
 
-        The calibration set must be disjoint from the training and validation
-        sets. It is drawn from the test split before any model evaluation.
+        The calibration set must be disjoint from train, val, and test splits.
+        Data is split four ways: train / val / cal / test. Cal is never evaluated
+        on and never seen during training; test remains clean for reporting.
 
         Args:
             ensemble: Trained ``QuMaskEnsemble`` in eval mode.
@@ -81,7 +84,17 @@ class ConformalPredictor:
         Side effects:
             Sets ``self.radius`` and ``self.n_cal``.
         """
-        ...
+        scores = []
+        for features, p_star in cal_loader:
+            out = ensemble.predict(features, device=device)
+            p_hat = out["p_hat"].cpu().numpy()
+            p_star_np = p_star.numpy()
+            tv = 0.5 * np.abs(p_hat - p_star_np).sum(axis=-1)  # (batch,)
+            scores.append(tv)
+        scores = np.concatenate(scores)
+        self.n_cal = len(scores)
+        q = min((1 - self.alpha) * (1 + 1 / self.n_cal), 1.0)
+        self.radius = float(np.quantile(scores, q))
 
     def prediction_interval(self, p_hat: np.ndarray) -> dict[str, object]:
         """Return the conformal prediction set for a single instance.
@@ -102,7 +115,9 @@ class ConformalPredictor:
         Raises:
             RuntimeError: If called before ``calibrate``.
         """
-        ...
+        if self.radius is None:
+            raise RuntimeError("ConformalPredictor must be calibrated before calling prediction_interval.")
+        return {"center": p_hat, "radius": self.radius, "alpha": self.alpha}
 
     def empirical_coverage(
         self,
@@ -121,4 +136,5 @@ class ConformalPredictor:
         Returns:
             Scalar in [0, 1]. The empirical fraction of instances covered.
         """
-        ...
+        tv = 0.5 * np.abs(p_hats - p_stars).sum(axis=-1)  # (N,)
+        return float((tv <= self.radius).mean())

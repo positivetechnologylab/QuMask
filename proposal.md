@@ -64,7 +64,7 @@ p̂   = (1/M) Σₘ p̂⁽ᵐ⁾            (point estimate)
 σᵢ² = (1/M) Σₘ (p̂ᵢ⁽ᵐ⁾ − p̂ᵢ)²   (per-bin variance)
 ```
 
-Report p̂ᵢ ± 2σᵢ as approximate 95% per-bin intervals. Apply conformal prediction on a held-out calibration set to obtain a rigorous coverage guarantee: a TV-ball around p̂ that contains p* with probability ≥ 1−α. The nonconformity score is the TV distance between the ensemble prediction and the empirical marginal estimated from held-out blocks.
+Report p̂ᵢ ± 2σᵢ as approximate 95% per-bin intervals. Apply conformal prediction on a held-out calibration set to obtain a rigorous coverage guarantee: a TV-ball around p̂ that contains p* with probability ≥ 1−α. The nonconformity score is TV(p̂_ensemble, p*) — the TV distance between the ensemble mean prediction and the true label on each calibration instance. p* is known by construction on the simulated calibration set; at real inference time the pre-fitted radius r is applied directly without requiring p*.
 
 ---
 
