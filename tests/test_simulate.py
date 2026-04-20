@@ -13,7 +13,9 @@ import pytest
 from data.simulate import (
     random_decoy_partition,
     generate_instance,
+    generate_instance_fixed,
     generate_dataset,
+    generate_dataset_fixed,
     save_dataset,
     load_dataset,
 )
@@ -430,3 +432,197 @@ class TestSaveLoadDataset:
         assert ds["features"].dtype == np.float32
         assert ds["p_stars"].dtype == np.float64
         assert ds["bitstrings"].dtype == np.uint8
+
+
+# ---------------------------------------------------------------------------
+# TestGenerateInstanceFixed
+# ---------------------------------------------------------------------------
+
+@pytest.mark.slow
+class TestGenerateInstanceFixed:
+
+    def test_output_keys(self, tiny_instance_fixed):
+        assert set(tiny_instance_fixed.keys()) == {"features", "p_star", "bitstrings", "target_positions"}
+
+    def test_shapes(self, tiny_instance_fixed, k, n):
+        F = feature_dim(n, k)
+        assert tiny_instance_fixed["features"].shape == (10, F)
+        assert tiny_instance_fixed["p_star"].shape == (2**k,)
+        assert tiny_instance_fixed["bitstrings"].shape == (10, 10, n)
+        assert tiny_instance_fixed["target_positions"].shape == (10, k)
+
+    def test_dtypes(self, tiny_instance_fixed):
+        assert tiny_instance_fixed["features"].dtype == np.float32
+        assert tiny_instance_fixed["p_star"].dtype == np.float64
+        assert tiny_instance_fixed["bitstrings"].dtype == np.uint8
+        assert tiny_instance_fixed["target_positions"].dtype in (np.int32, np.int64, int)
+
+    def test_p_star_sums_to_one(self, tiny_instance_fixed):
+        assert tiny_instance_fixed["p_star"].sum() == pytest.approx(1.0, abs=1e-12)
+
+    def test_p_star_nonnegative(self, tiny_instance_fixed):
+        assert np.all(tiny_instance_fixed["p_star"] >= 0)
+
+    def test_bitstrings_binary(self, tiny_instance_fixed):
+        assert set(tiny_instance_fixed["bitstrings"].flatten().tolist()).issubset({0, 1})
+
+    def test_feature_range(self, tiny_instance_fixed):
+        f = tiny_instance_fixed["features"]
+        assert np.all(f >= -1.0 - 1e-6) and np.all(f <= 1.0 + 1e-6)
+
+    def test_target_positions_in_range(self, tiny_instance_fixed, k, n):
+        tp = tiny_instance_fixed["target_positions"]
+        assert np.all(tp >= 0) and np.all(tp < n)
+
+    def test_target_positions_no_repeats(self, tiny_instance_fixed, k):
+        # Each row must have k distinct qubits.
+        for row in tiny_instance_fixed["target_positions"]:
+            assert len(set(row.tolist())) == k
+
+    def test_target_positions_constant_across_blocks(self, tiny_instance_fixed):
+        """All blocks must share the same target position — the defining property."""
+        tp = tiny_instance_fixed["target_positions"]
+        assert np.all(tp == tp[0]), "target positions are not constant across blocks"
+
+    def test_determinism(self, k, n):
+        a = generate_instance_fixed(k=k, n=n, n_blocks=5, shots_per_block=10, target_depth=4, seed=7)
+        b = generate_instance_fixed(k=k, n=n, n_blocks=5, shots_per_block=10, target_depth=4, seed=7)
+        for key in a:
+            np.testing.assert_array_equal(a[key], b[key], err_msg=f"mismatch in '{key}'")
+
+    def test_different_seeds_differ(self, k, n):
+        a = generate_instance_fixed(k=k, n=n, n_blocks=5, shots_per_block=10, target_depth=4, seed=0)
+        b = generate_instance_fixed(k=k, n=n, n_blocks=5, shots_per_block=10, target_depth=4, seed=1)
+        assert not np.array_equal(a["p_star"], b["p_star"])
+        assert not np.array_equal(a["bitstrings"], b["bitstrings"])
+
+    def test_target_columns_match_p_star_statistically(self, k, n):
+        """Empirical marginal over the fixed target columns must be close to p_star."""
+        inst = generate_instance_fixed(k=k, n=n, n_blocks=1, shots_per_block=5000,
+                                       target_depth=4, seed=42)
+        p_star = inst["p_star"]
+        bits = inst["bitstrings"][0]       # (5000, n)
+        pos = inst["target_positions"][0]  # (k,)
+        target_bits = bits[:, pos]         # (5000, k) — two-step indexing
+        indices = _index_from_bits(target_bits, k)
+        empirical = np.bincount(indices, minlength=2**k) / 5000.0
+        np.testing.assert_allclose(empirical, p_star, atol=0.035,
+                                   err_msg="empirical target marginal does not match p_star")
+
+    def test_p_star_consistent_across_blocks(self, k, n):
+        """Per-block empirical marginals should all be consistent with p_star."""
+        n_blocks = 20
+        shots = 200
+        inst = generate_instance_fixed(k=k, n=n, n_blocks=n_blocks, shots_per_block=shots,
+                                       target_depth=4, seed=55)
+        p_star = inst["p_star"]
+        for b in range(n_blocks):
+            pos = inst["target_positions"][b]  # identical for all b
+            tb = inst["bitstrings"][b][:, pos]  # (shots, k)
+            indices = _index_from_bits(tb, k)
+            emp = np.bincount(indices, minlength=2**k) / shots
+            np.testing.assert_allclose(
+                emp, p_star, atol=0.15,
+                err_msg=f"block {b} marginal inconsistent with p_star"
+            )
+
+    def test_target_position_ordering_preserved(self):
+        """Pooled empirical marginal using recorded positions must match p_star.
+
+        Same rationale as in TestGenerateInstance — verifies MSB-first column
+        ordering is preserved when interleaving bitstrings.
+        """
+        inst = generate_instance_fixed(k=2, n=4, n_blocks=30, shots_per_block=500,
+                                       target_depth=4, seed=77)
+        p_star = inst["p_star"]
+        total_shots = 30 * 500
+        counts = np.zeros(4, dtype=np.int64)
+        for b in range(30):
+            pos = inst["target_positions"][b]
+            tb = inst["bitstrings"][b][:, pos]  # (500, 2)
+            indices = _index_from_bits(tb, 2)
+            counts += np.bincount(indices, minlength=4)
+        empirical = counts / total_shots
+        np.testing.assert_allclose(
+            empirical, p_star, atol=0.05,
+            err_msg="pooled empirical marginal disagrees with p_star"
+        )
+
+    def test_differs_from_generate_instance(self, k, n):
+        """Fixed-position and random-position instances with the same seed must differ.
+
+        The RNG consumes different numbers of draws (fixed position is drawn
+        once vs. once per block), so bitstrings will diverge.
+        """
+        fixed = generate_instance_fixed(k=k, n=n, n_blocks=10, shots_per_block=10,
+                                        target_depth=4, seed=42)
+        varying = generate_instance(k=k, n=n, n_blocks=10, shots_per_block=10,
+                                    target_depth=4, seed=42)
+        # target_positions should not all match between the two
+        assert not np.all(fixed["target_positions"] == varying["target_positions"]) or \
+               not np.array_equal(fixed["bitstrings"], varying["bitstrings"]), \
+               "fixed and varying instances are unexpectedly identical"
+
+
+# ---------------------------------------------------------------------------
+# TestGenerateDatasetFixed
+# ---------------------------------------------------------------------------
+
+@pytest.mark.slow
+class TestGenerateDatasetFixed:
+
+    def test_output_keys(self, tiny_dataset_fixed_path):
+        ds = load_dataset(tiny_dataset_fixed_path)
+        assert set(ds.keys()) == {"features", "p_stars", "bitstrings", "target_positions"}
+
+    def test_shapes(self, tiny_dataset_fixed_path, k, n):
+        ds = load_dataset(tiny_dataset_fixed_path)
+        F = feature_dim(n, k)
+        assert ds["features"].shape == (20, 10, F)
+        assert ds["p_stars"].shape == (20, 2**k)
+        assert ds["bitstrings"].shape == (20, 10, 10, n)
+        assert ds["target_positions"].shape == (20, 10, k)
+
+    def test_all_instances_constant_target_positions(self, tiny_dataset_fixed_path):
+        """For every instance, all blocks must share the same target position."""
+        ds = load_dataset(tiny_dataset_fixed_path)
+        for i, tp in enumerate(ds["target_positions"]):  # (10, k) per instance
+            assert np.all(tp == tp[0]), f"instance {i}: target positions are not constant across blocks"
+
+    def test_all_instances_distinct_p_stars(self, tiny_dataset_fixed_path):
+        ds = load_dataset(tiny_dataset_fixed_path)
+        p_stars = ds["p_stars"]
+        for i in range(len(p_stars)):
+            for j in range(i + 1, len(p_stars)):
+                assert not np.allclose(p_stars[i], p_stars[j]), \
+                    f"instances {i} and {j} have identical p_stars — seeds may not be advancing"
+
+    def test_determinism_via_seed_base(self, k, n):
+        a = generate_dataset_fixed(n_instances=3, k=k, n=n, n_blocks=5,
+                                   shots_per_block=5, target_depth=4, seed_base=0, n_jobs=1)
+        b = generate_dataset_fixed(n_instances=3, k=k, n=n, n_blocks=5,
+                                   shots_per_block=5, target_depth=4, seed_base=0, n_jobs=1)
+        for key in a:
+            np.testing.assert_array_equal(a[key], b[key], err_msg=f"non-determinism in '{key}'")
+
+    def test_seed_base_offset_produces_different_instances(self, k, n):
+        a = generate_dataset_fixed(n_instances=2, k=k, n=n, n_blocks=5,
+                                   shots_per_block=5, target_depth=4, seed_base=0, n_jobs=1)
+        b = generate_dataset_fixed(n_instances=2, k=k, n=n, n_blocks=5,
+                                   shots_per_block=5, target_depth=4, seed_base=50, n_jobs=1)
+        assert not np.array_equal(a["p_stars"], b["p_stars"])
+
+    def test_instance_i_matches_generate_instance_fixed(self, k, n):
+        """generate_dataset_fixed instance i must equal generate_instance_fixed(seed=seed_base+i)."""
+        seed_base = 7
+        ds = generate_dataset_fixed(n_instances=3, k=k, n=n, n_blocks=5,
+                                    shots_per_block=5, target_depth=4, seed_base=seed_base, n_jobs=1)
+        for i in range(3):
+            inst = generate_instance_fixed(k=k, n=n, n_blocks=5, shots_per_block=5,
+                                           target_depth=4, seed=seed_base + i)
+            np.testing.assert_array_equal(ds["features"][i], inst["features"],
+                                          err_msg=f"features mismatch at instance {i}")
+            np.testing.assert_array_equal(ds["p_stars"][i], inst["p_star"],
+                                          err_msg=f"p_star mismatch at instance {i}")
+            np.testing.assert_array_equal(ds["bitstrings"][i], inst["bitstrings"],
+                                          err_msg=f"bitstrings mismatch at instance {i}")

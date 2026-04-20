@@ -83,6 +83,8 @@ All training data is simulated. Each training instance:
 
 Generate thousands of such instances across varying target circuits (spanning a range of output entropies) for a robust training set. Stratify by target circuit entropy to ensure adequate representation of near-uniform distributions, which are the hardest case.
 
+**Data splits — four-way:** train / val / cal / test. Each split is generated independently with non-overlapping seed ranges, producing four separate dataset files. Val is used for early stopping only and never evaluated on. Cal is used solely to fit the conformal quantile and is never seen during training or reported on. Test is held out completely for final metric reporting.
+
 ---
 
 # Evaluation
@@ -144,8 +146,8 @@ Stack → input tensor (1000 × F), label p*
 [Training]
 Train ensemble of M transformers
 Loss: KL(p* ∥ p̂), optimizer: AdamW
-Validate on held-out simulation instances
-Calibrate conformal predictor on calibration split
+Validate on val split (early stopping)
+Calibrate conformal predictor on cal split (disjoint from train, val, and test)
 
 [Inference]
 New QuMask dataset (10k bitstrings, 1000 blocks, block structure known)

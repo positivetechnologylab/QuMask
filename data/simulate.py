@@ -228,6 +228,126 @@ def generate_dataset(
     }
 
 
+def generate_instance_fixed(
+    k: int,
+    n: int,
+    n_blocks: int,
+    shots_per_block: int,
+    target_depth: int,
+    seed: int | None = None,
+) -> dict[str, np.ndarray]:
+    """Generate one training instance with the target circuit at a fixed qubit position.
+
+    Identical to ``generate_instance`` except the target qubit positions are
+    drawn once before the block loop and held constant for all blocks.  Decoy
+    partitions and decoy circuits are still re-randomized per block.  This
+    mirrors the fixed-position obfuscation regime, under which the variance
+    baseline is significantly more effective.
+
+    Args:
+        k: Number of target qubits.
+        n: Total system qubits.
+        n_blocks: Number of blocks.
+        shots_per_block: Shots per block.
+        target_depth: Base circuit depth.
+        seed: Optional RNG seed for full reproducibility.
+
+    Returns:
+        Dict with the same keys as ``generate_instance``:
+        - ``"features"``: float32 array of shape ``(n_blocks, F)``.
+        - ``"p_star"``: float64 array of shape ``(2**k,)``.
+        - ``"bitstrings"``: uint8 array of shape ``(n_blocks, shots_per_block, n)``.
+        - ``"target_positions"``: int array of shape ``(n_blocks, k)`` — every
+          row is identical (the single fixed position used for all blocks).
+    """
+    rng = np.random.default_rng(seed)
+
+    target_circuit_seed = int(rng.integers(0, 2**31))
+    target_circuit = random_circuit(k, target_depth, seed=target_circuit_seed)
+    p_star = statevector_distribution(target_circuit)
+
+    depth_lo = int(target_depth * 0.75)
+    depth_hi = int(target_depth * 1.25)
+
+    # Draw target position once; tile across all blocks.
+    target_pos = rng.choice(n, size=k, replace=False)
+    target_positions_all = np.tile(target_pos, (n_blocks, 1))
+
+    bitstrings = np.empty((n_blocks, shots_per_block, n), dtype=np.uint8)
+
+    for b in range(n_blocks):
+        block_seed = int(rng.integers(0, 2**31))
+        block_rng = np.random.default_rng(block_seed)
+
+        target_shot_seed = int(block_rng.integers(0, 2**31))
+        target_bits = sample_shots(p_star, shots_per_block, seed=target_shot_seed)
+
+        available = np.array([q for q in range(n) if q not in set(target_pos.tolist())])
+        decoy_groups = random_decoy_partition(available, block_rng)
+
+        decoy_bits_list = []
+        decoy_positions_list = []
+        for group in decoy_groups:
+            g = len(group)
+            decoy_depth = int(block_rng.integers(depth_lo, depth_hi + 1))
+            decoy_seed = int(block_rng.integers(0, 2**31))
+            decoy_circuit = random_circuit(g, decoy_depth, seed=decoy_seed)
+            p_decoy = statevector_distribution(decoy_circuit)
+            decoy_shot_seed = int(block_rng.integers(0, 2**31))
+            decoy_bits_list.append(sample_shots(p_decoy, shots_per_block, seed=decoy_shot_seed))
+            decoy_positions_list.append(group)
+
+        bitstrings[b] = interleave_bitstrings(
+            target_bits, decoy_bits_list, target_pos, decoy_positions_list, n
+        )
+
+    features = compute_block_features(bitstrings, n, k)
+
+    return {
+        "features": features,
+        "p_star": p_star,
+        "bitstrings": bitstrings,
+        "target_positions": target_positions_all,
+        "target_circuit": target_circuit,
+    }
+
+
+def generate_dataset_fixed(
+    n_instances: int,
+    k: int,
+    n: int,
+    n_blocks: int = 1000,
+    shots_per_block: int = 10,
+    target_depth: int = 4,
+    seed_base: int = 0,
+    n_jobs: int = 1,
+) -> dict[str, np.ndarray]:
+    """Generate a dataset of fixed-position instances in parallel.
+
+    Each instance gets seed ``seed_base + i``.  Mirrors ``generate_dataset``
+    but calls ``generate_instance_fixed`` so target qubit positions are held
+    constant within each instance.
+
+    Returns:
+        Dict with keys:
+        - ``"features"``: shape ``(n_instances, n_blocks, F)``, float32
+        - ``"p_stars"``: shape ``(n_instances, 2**k)``, float64
+        - ``"bitstrings"``: shape ``(n_instances, n_blocks, shots_per_block, n)``, uint8
+        - ``"target_positions"``: shape ``(n_instances, n_blocks, k)``, int
+    """
+    results = Parallel(n_jobs=n_jobs)(
+        delayed(generate_instance_fixed)(k, n, n_blocks, shots_per_block, target_depth, seed=seed_base + i)
+        for i in range(n_instances)
+    )
+
+    return {
+        "features":         np.stack([r["features"] for r in results]),
+        "p_stars":          np.stack([r["p_star"] for r in results]),
+        "bitstrings":       np.stack([r["bitstrings"] for r in results]),
+        "target_positions": np.stack([r["target_positions"] for r in results]),
+    }
+
+
 def save_dataset(dataset: dict[str, np.ndarray], path: str) -> None:
     """Save a dataset dict to a compressed numpy archive.
 

@@ -1,0 +1,32 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.venv/
+
+# Pytest
+.pytest_cache/
+*.pytest_cache
+
+# Data — generated, not source-controlled
+data/processed/
+*.npz
+
+# Model checkpoints
+checkpoints/
+
+# Results
+results/
+*.txt
+
+# Node (present in repo root for some reason)
+node_modules/
+package-lock.json
+
+# macOS
+.DS_Store
+
+# Jupyter
+.ipynb_checkpoints/
+*.ipynb

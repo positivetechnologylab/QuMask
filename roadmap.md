@@ -10,6 +10,8 @@ tvd: hand-verify TV([1,0,0,0], [0,1,0,0]) = 1.0, TV(p,p) = 0, TV = 0.5·L1
 kl_divergence: verify KL(p,p) = 0, KL blows up when q has zero mass where p doesn't (before eps clipping), verify eps clipping behavior explicitly
 empirical_marginal: construct a fake (n_blocks, shots, n) array where you know the true marginal, verify the output matches
 compute_all_metrics: integration test — feed known p_hat, p_star, p_hat_marginal, verify all dict keys are present and values are finite
+
+
 2. data/features.py
 Implement get_all_subsets, feature_dim, compute_correlators, compute_block_features. Pure numpy, no Qiskit.
 
@@ -21,6 +23,8 @@ compute_correlators: construct a trivial case — all-zeros bitstring block → 
 compute_correlators: 10 shots of alternating 0/1 on qubit 0 → ⟨Z_0⟩ ≈ 0; verify sign conventions throughout
 compute_block_features: verify output shape (n_blocks, F) for (n=10,k=3)
 Verify get_all_subsets is cached: call it twice, confirm it returns the same object (identity check)
+
+
 Phase 2 — Simulation
 3. utils/circuits.py
 Implement random_circuit, statevector_distribution, sample_shots, interleave_bitstrings. First Qiskit dependency.
@@ -32,6 +36,8 @@ statevector_distribution output sums to 1 for random circuits of varying sizes
 sample_shots: sample 10k shots from [0.5, 0.5], verify empirical frequency is within 3σ of 0.5
 sample_shots with seed is deterministic; different seeds give different results
 interleave_bitstrings: construct a 3-qubit case by hand — target on qubits [1,3], decoy on [0,2,4] — verify columns land in the right positions in the assembled 5-qubit output
+
+
 4. data/simulate.py
 Implement random_decoy_partition, generate_instance, generate_dataset, save_dataset, load_dataset.
 
@@ -46,6 +52,8 @@ target_positions: (1000, 3) int with values in [0,9], no duplicates within a row
 generate_instance with same seed → identical output (determinism check)
 save_dataset / load_dataset round-trip: save and reload, verify all arrays are bit-for-bit identical
 Sanity check on feature values: all entries in [-1, 1]
+
+
 Phase 3 — Baseline (validates the problem is solvable before touching ML)
 5. baseline.py
 Implement marginal_for_subset, cross_block_variance, variance_baseline, run_baseline_on_dataset.
