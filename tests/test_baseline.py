@@ -72,41 +72,40 @@ class TestMarginalForSubset:
         # index 0 = bit "0", index 1 = bit "1" (MSB-first with k=1 is trivial)
         np.testing.assert_allclose(result, [0.0, 1.0])
 
-    def test_bit_ordering_msb_first(self, n):
-        """Verify MSB-first: qubit_subset[0] is most-significant bit.
+    def test_bit_ordering_lsb_first(self, n):
+        """Verify LSB-first: qubit_subset[0] is least-significant bit.
 
         Construct a 2-qubit subset where col A=1, col B=0 for all shots.
-        Binary string "10" → integer 2, so index 2 should have all mass.
-        With LSB-first it would be index 1. This distinguishes the two conventions.
+        LSB-first: index = 1*1 + 0*2 = 1, so index 1 should have all mass.
         """
         bits = np.zeros((5, 4, n), dtype=np.uint8)
         bits[:, :, 0] = 1   # qubit A = 1
         bits[:, :, 1] = 0   # qubit B = 0
-        result = marginal_for_subset(bits, (0, 1))  # subset[0]=A is MSB
+        result = marginal_for_subset(bits, (0, 1))  # subset[0]=A is LSB
         assert result.shape == (4,)
-        # "10" → index 2
-        np.testing.assert_allclose(result, [0.0, 0.0, 1.0, 0.0])
+        # index = 1*1 + 0*2 = 1
+        np.testing.assert_allclose(result, [0.0, 1.0, 0.0, 0.0])
 
     def test_non_contiguous_subset(self, n):
         """Non-contiguous qubit indices are handled correctly."""
-        # Columns 1 and 7: always "01" → integer 1
+        # Columns 1=0, 7=1: LSB-first index = 0*1 + 1*2 = 2
         bits = np.zeros((3, 6, n), dtype=np.uint8)
         bits[:, :, 1] = 0
         bits[:, :, 7] = 1
         result = marginal_for_subset(bits, (1, 7))
-        np.testing.assert_allclose(result, [0.0, 1.0, 0.0, 0.0])
+        np.testing.assert_allclose(result, [0.0, 0.0, 1.0, 0.0])
 
     def test_subset_order_matters(self, n):
-        """Swapping subset elements changes which index gets the mass (MSB vs LSB)."""
-        # col 0 = 1, col 3 = 0 → subset (0,3): "10" → index 2
-        # subset (3,0): "01" → index 1
+        """Swapping subset elements changes which index gets the mass (LSB-first)."""
+        # col 0 = 1, col 3 = 0 → subset (0,3): LSB index = 1*1 + 0*2 = 1
+        # subset (3,0): LSB index = 0*1 + 1*2 = 2
         bits = np.zeros((2, 5, n), dtype=np.uint8)
         bits[:, :, 0] = 1
         bits[:, :, 3] = 0
         r_03 = marginal_for_subset(bits, (0, 3))
         r_30 = marginal_for_subset(bits, (3, 0))
-        assert r_03.argmax() == 2
-        assert r_30.argmax() == 1
+        assert r_03.argmax() == 1
+        assert r_30.argmax() == 2
 
     def test_matches_empirical_marginal_convention(self, synthetic_bitstrings, k):
         """marginal_for_subset with fixed positions must match empirical_marginal."""

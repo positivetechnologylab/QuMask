@@ -48,8 +48,8 @@ def marginal_for_subset(
     # Flatten to (total_shots, n), extract subset columns
     bits = bitstrings_blocked.reshape(-1, bitstrings_blocked.shape[-1])
     extracted = bits[:, list(qubit_subset)]  # (total_shots, k)
-    # MSB-first: qubit_subset[0] is the most significant bit
-    powers = 1 << np.arange(k - 1, -1, -1)
+    # LSB-first: qubit_subset[0] is the least significant bit
+    powers = 1 << np.arange(k)
     indices = extracted @ powers
     counts = np.bincount(indices, minlength=2**k).astype(np.float64)
     return counts / bits.shape[0]
@@ -76,7 +76,7 @@ def cross_block_variance(
     k = len(qubit_subset)
     n_blocks, shots_per_block, _ = bitstrings_blocked.shape
     cols = list(qubit_subset)
-    powers = 1 << np.arange(k - 1, -1, -1)
+    powers = 1 << np.arange(k)
 
     # block_marginals[b] = empirical marginal for block b
     block_marginals = np.empty((n_blocks, 2**k), dtype=np.float64)

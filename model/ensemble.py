@@ -306,7 +306,7 @@ def load_ensemble(
     for m in range(M):
         model = build_model_from_config(cfg)
         path = checkpoint_path / f"member_{m}.pt"
-        model.load_state_dict(torch.load(path, map_location=device))
+        model.load_state_dict(torch.load(path, map_location=device, weights_only=True))
         model.to(device).eval()
         models.append(model)
     return QuMaskEnsemble(models)

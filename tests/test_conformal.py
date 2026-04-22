@@ -100,7 +100,7 @@ class TestCalibrateQuantileLogic:
         predictor, scores = self._calibrate_with_scores(scores, alpha=alpha)
         N = len(scores)
         q = min((1 - alpha) * (1 + 1 / N), 1.0)
-        expected = float(np.quantile(scores, q))
+        expected = float(np.quantile(scores, q, method='higher'))
         assert abs(predictor.radius - expected) < 1e-5
 
     def test_n_cal_set_correctly(self):

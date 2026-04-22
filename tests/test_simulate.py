@@ -220,7 +220,6 @@ class TestGenerateInstance:
         assert np.all(col_means >= 0.0)  # trivially true; real check below
         # No column should be identically zero across all 100 shots — that would
         # indicate it was never written.
-        assert not np.any(col_means == 0.0) or True  # soft: just confirm shape is right
         assert bits.shape == (100, n)
 
     def test_target_columns_match_p_star_statistically(self, k, n):
@@ -259,10 +258,8 @@ class TestGenerateInstance:
         decoy_bits = bits[:, decoy_cols]
         indices = _index_from_bits(decoy_bits, k)
         decoy_empirical = np.bincount(indices, minlength=2**k) / 5000.0
-        # They should differ — TVD > some small threshold
-        tvd = 0.5 * np.abs(decoy_empirical - p_star).sum()
-        # Not asserting a specific value, just that the decoy isn't a copy of target
-        assert tvd >= 0.0  # always true; real intent is structural (no copy bug)
+        assert not np.allclose(decoy_empirical, p_star, atol=1e-3), \
+            "decoy empirical marginal is suspiciously close to p_star — decoy columns may be a copy of target"
 
     def test_p_star_fixed_across_blocks(self, k, n):
         """p_star must be the same distribution in every block.

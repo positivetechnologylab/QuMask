@@ -83,8 +83,11 @@ def ece(
     true = p_stars.ravel()
     sigma = sigmas.ravel()
 
-    # Use sigma as the "confidence" axis for binning
-    bin_edges = np.linspace(0.0, sigma.max(), n_bins + 1)
+    # Use sigma as the "confidence" axis for binning (equal-frequency buckets)
+    percentiles = np.linspace(0, 100, n_bins + 1)
+    bin_edges = np.percentile(sigma, percentiles)
+    if bin_edges[-1] == bin_edges[0]:
+        return 0.0
     total = len(pred)
     ece_val = 0.0
     for i, (lo, hi) in enumerate(zip(bin_edges[:-1], bin_edges[1:])):
@@ -130,13 +133,13 @@ def empirical_marginal(
     if target_positions.ndim == 1:
         # Same positions for every shot
         extracted = bits[:, target_positions]  # (total_shots, k)
-        powers = 1 << np.arange(k - 1, -1, -1)
+        powers = 1 << np.arange(k)
         indices = extracted @ powers
         np.add.at(counts, indices, 1)
     else:
         # Per-block positions: target_positions is (n_blocks, k)
         n_blocks, shots_per_block = bitstrings.shape[:2]
-        powers = 1 << np.arange(k - 1, -1, -1)
+        powers = 1 << np.arange(k)
         for b in range(n_blocks):
             extracted = bits[b * shots_per_block:(b + 1) * shots_per_block, target_positions[b]]
             indices = extracted @ powers

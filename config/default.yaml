@@ -3,10 +3,10 @@ data:
   n: 10              # total system qubits
   n_blocks: 1000     # number of blocks per instance
   shots_per_block: 10
-  n_train: 8000      # training instances
-  n_val: 1000        # validation instances
-  n_test: 1000       # test instances
-  n_cal: 500         # conformal calibration instances (drawn from test set)
+  n_train: 8000      # training instances; seeds [0, 8000)
+  n_val: 1000        # validation instances; seeds [8000, 9000)
+  n_cal: 500         # conformal calibration instances; seeds [9000, 9500)
+  n_test: 1000       # test instances; seeds [9500, 10500)
   target_depth: 4    # base depth for target circuit; decoys sampled from U(0.75d, 1.25d)
 
 model:
@@ -34,3 +34,7 @@ paths:
   data_dir: data/processed
   checkpoint_dir: checkpoints
   results_dir: results
+  seed_train: 0
+  seed_val: 8000
+  seed_cal: 9000
+  seed_test: 9500

@@ -308,7 +308,6 @@ def generate_instance_fixed(
         "p_star": p_star,
         "bitstrings": bitstrings,
         "target_positions": target_positions_all,
-        "target_circuit": target_circuit,
     }
 
 

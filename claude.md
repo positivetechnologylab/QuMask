@@ -16,7 +16,7 @@ ML model for target probability distribution recovery within the context of bits
 - Fallback mechanisms generally hide real failures and should be avoided unless explicitly necessary, in which case you must defend why that's the case.
 - When writing tests, be especially sensitive to edge cases, and particularly those involving indexing.
 - Avoid mixing scalar, slice, and list indices in a single numpy index expression (e.g. `a[scalar, :, list]`). This triggers advanced indexing broadcast rules and transposes the result unexpectedly. Use two-step indexing instead: `a[scalar][:, list]`.
-- Use most significant bit first-ordering.
+- Use least significant bit first-ordering.
 
 
 ## Style

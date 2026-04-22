@@ -94,7 +94,7 @@ class ConformalPredictor:
         scores = np.concatenate(scores)
         self.n_cal = len(scores)
         q = min((1 - self.alpha) * (1 + 1 / self.n_cal), 1.0)
-        self.radius = float(np.quantile(scores, q))
+        self.radius = float(np.quantile(scores, q, method='higher'))
 
     def prediction_interval(self, p_hat: np.ndarray) -> dict[str, object]:
         """Return the conformal prediction set for a single instance.
