@@ -78,13 +78,18 @@ def main() -> None:
 
     data_dir = Path(cfg["paths"]["data_dir"])
     tr = cfg["training"]
-    kwargs = dict(batch_size=tr["batch_size"], num_workers=0, pin_memory=torch.cuda.is_available())
+    if torch.cuda.is_available():
+        device = torch.device("cuda")
+    elif torch.backends.mps.is_available():
+        device = torch.device("mps")
+    else:
+        device = torch.device("cpu")
+    print(f"Training on {device}")
+
+    kwargs = dict(batch_size=tr["batch_size"], num_workers=0, pin_memory=(device.type == "cuda"))
 
     train_loader = DataLoader(QuMaskDataset(str(data_dir / "train.npz")), shuffle=True, **kwargs)
     val_loader   = DataLoader(QuMaskDataset(str(data_dir / "val.npz")),   shuffle=False, **kwargs)
-
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    print(f"Training on {device}")
 
     ensemble = train_all(
         cfg=cfg,
