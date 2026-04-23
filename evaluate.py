@@ -48,58 +48,62 @@ def run_model_evaluation(
     device: torch.device,
 ) -> dict[str, np.ndarray]:
     data_dir = Path(cfg["paths"]["data_dir"])
+    k = cfg["data"]["k"]
+    batch_size = cfg["training"]["batch_size"]
+
+    ensemble = load_ensemble(cfg, cfg["paths"]["checkpoint_dir"], device=device)
 
     # Calibrate conformal predictor on the cal split.
     cal_loader = DataLoader(
         QuMaskDataset(str(data_dir / "cal.npz")),
-        batch_size=cfg["training"]["batch_size"],
+        batch_size=batch_size,
         shuffle=False,
     )
-    ensemble = load_ensemble(cfg, cfg["paths"]["checkpoint_dir"], device=device)
     predictor = ConformalPredictor(alpha=cfg["conformal"]["alpha"])
     predictor.calibrate(ensemble, cal_loader, device=device)
 
-    # Run inference on test set instance-by-instance to pair model output
-    # with oracle bitstrings/target_positions from get_eval_arrays.
+    # Batched inference over the test set.
     test_ds = QuMaskDataset(str(data_dir / "test.npz"))
+    test_loader = DataLoader(test_ds, batch_size=batch_size, shuffle=False)
+
+    p_hats_list: list[np.ndarray] = []
+    sigmas_list: list[np.ndarray] = []
+    for features, _ in test_loader:
+        out = ensemble.predict(features, device=device)
+        p_hats_list.append(out["p_hat"].cpu().numpy())
+        sigmas_list.append(out["sigma"].cpu().numpy())
+
+    p_hats  = np.concatenate(p_hats_list, axis=0).astype(np.float64)   # (N, 2**k)
+    sigmas  = np.concatenate(sigmas_list, axis=0).astype(np.float64)   # (N, 2**k)
+    p_stars = test_ds.p_stars.astype(np.float64)                        # (N, 2**k)
+
+    # Vectorized empirical marginals over all test instances.
+    # bitstrings: (N, n_blocks, shots_per_block, n)
+    # target_positions: (N, n_blocks, k)
     N = len(test_ds)
-    output_dim = 2 ** cfg["data"]["k"]
+    n_blocks, shots_per_block = test_ds.bitstrings.shape[1], test_ds.bitstrings.shape[2]
+    powers = 1 << np.arange(k)
 
-    p_hats   = np.empty((N, output_dim), dtype=np.float64)
-    p_stars  = np.empty((N, output_dim), dtype=np.float64)
-    sigmas   = np.empty((N, output_dim), dtype=np.float64)
-    tvd_adv  = np.empty(N, dtype=np.float64)
-    tvd_true = np.empty(N, dtype=np.float64)
-    kl_true  = np.empty(N, dtype=np.float64)
-    entropy_true = np.empty(N, dtype=np.float64)
+    # Extract per-block target bits: (N, n_blocks, shots_per_block, k)
+    bits = test_ds.bitstrings  # (N, n_blocks, shots, n), uint8
+    tp   = test_ds.target_positions  # (N, n_blocks, k)
 
-    for idx in range(N):
-        features, _ = test_ds[idx]
-        x = features.unsqueeze(0)  # (1, n_blocks, F)
-        out = ensemble.predict(x, device=device)
-        p_hat = out["p_hat"].squeeze(0).cpu().numpy()
-        sigma = out["sigma"].squeeze(0).cpu().numpy()
+    # Two-step indexing to avoid advanced-indexing transpose: index instance+block first.
+    p_hat_marginals = np.empty((N, 2**k), dtype=np.float64)
+    for i in range(N):
+        counts = np.zeros(2**k, dtype=np.float64)
+        for b in range(n_blocks):
+            extracted = bits[i, b][:, tp[i, b]]   # (shots_per_block, k)
+            indices = extracted @ powers
+            np.add.at(counts, indices, 1)
+        p_hat_marginals[i] = counts / (n_blocks * shots_per_block)
 
-        eval_arrays = test_ds.get_eval_arrays(idx)
-        p_hat_marginal = empirical_marginal(
-            eval_arrays["bitstrings"],
-            eval_arrays["target_positions"],
-            cfg["data"]["k"],
-        )
-        metrics = compute_all_metrics(
-            p_hat=p_hat,
-            p_hat_marginal=p_hat_marginal,
-            p_star=eval_arrays["p_star"],
-            conformal_radius=predictor.radius,
-        )
-
-        p_hats[idx]       = p_hat
-        p_stars[idx]      = eval_arrays["p_star"]
-        sigmas[idx]       = sigma
-        tvd_adv[idx]      = metrics["tvd_adv"]
-        tvd_true[idx]     = metrics["tvd_true"]
-        kl_true[idx]      = metrics["kl_true"]
-        entropy_true[idx] = metrics["entropy_true"]
+    # Vectorized metrics.
+    tvd_adv      = 0.5 * np.abs(p_hats - p_hat_marginals).sum(axis=-1)
+    tvd_true     = 0.5 * np.abs(p_hats - p_stars).sum(axis=-1)
+    safe_q       = np.where(p_hats > 0, p_hats, 1.0)
+    kl_true      = np.sum(np.where(p_stars > 0, p_stars * np.log(p_stars / safe_q), 0.0), axis=-1)
+    entropy_true = -np.sum(np.where(p_stars > 0, p_stars * np.log(p_stars), 0.0), axis=-1)
 
     conformal_coverage = predictor.empirical_coverage(p_hats, p_stars)
 
