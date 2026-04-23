@@ -22,7 +22,7 @@ from __future__ import annotations
 
 import numpy as np
 import torch
-from torch.utils.data import Dataset, DataLoader, random_split
+from torch.utils.data import Dataset, DataLoader
 
 
 class QuMaskDataset(Dataset):
@@ -94,34 +94,34 @@ class QuMaskDataset(Dataset):
 def get_dataloaders(
     train_path: str,
     val_path: str,
+    cal_path: str,
     test_path: str,
     batch_size: int = 64,
     num_workers: int = 0,
     pin_memory: bool = True,
-) -> tuple[DataLoader, DataLoader, DataLoader]:
-    """Construct train, validation, and test DataLoaders from pre-split .npz files.
+) -> tuple[DataLoader, DataLoader, DataLoader, DataLoader]:
+    """Construct train, val, cal, and test DataLoaders from pre-split .npz files.
 
-    Data is pre-split at generation time (see ``simulate.generate_dataset``
-    called separately for each split). This keeps split logic outside the
-    Dataset and makes splits reproducible without relying on in-memory shuffles.
+    Data is pre-split at generation time into four disjoint splits (train / val /
+    cal / test). Cal is used solely for conformal calibration and is never
+    evaluated on. Test is held out completely for final reporting.
 
     Args:
         train_path: Path to training split ``.npz``.
         val_path: Path to validation split ``.npz``.
+        cal_path: Path to calibration split ``.npz``.
         test_path: Path to test split ``.npz``.
         batch_size: Batch size for all loaders.
         num_workers: Worker processes for data loading. 0 = main process only.
         pin_memory: If True, use pinned memory for faster GPU transfers.
 
     Returns:
-        Tuple of ``(train_loader, val_loader, test_loader)``.
-        Train loader shuffles; val and test loaders do not.
+        Tuple of ``(train_loader, val_loader, cal_loader, test_loader)``.
+        Train loader shuffles; all others do not.
     """
-    train_ds = QuMaskDataset(train_path)
-    val_ds = QuMaskDataset(val_path)
-    test_ds = QuMaskDataset(test_path)
     kwargs = dict(batch_size=batch_size, num_workers=num_workers, pin_memory=pin_memory)
-    train_loader = DataLoader(train_ds, shuffle=True, **kwargs)
-    val_loader = DataLoader(val_ds, shuffle=False, **kwargs)
-    test_loader = DataLoader(test_ds, shuffle=False, **kwargs)
-    return train_loader, val_loader, test_loader
+    train_loader = DataLoader(QuMaskDataset(train_path), shuffle=True, **kwargs)
+    val_loader   = DataLoader(QuMaskDataset(val_path),   shuffle=False, **kwargs)
+    cal_loader   = DataLoader(QuMaskDataset(cal_path),   shuffle=False, **kwargs)
+    test_loader  = DataLoader(QuMaskDataset(test_path),  shuffle=False, **kwargs)
+    return train_loader, val_loader, cal_loader, test_loader

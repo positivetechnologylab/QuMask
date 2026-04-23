@@ -7,7 +7,7 @@ from pathlib import Path
 
 from model.transformer import QuMaskTransformer
 from model.ensemble import QuMaskEnsemble, train_single_member, train_all, load_ensemble
-from data.dataset import QuMaskDataset, get_dataloaders
+from data.dataset import QuMaskDataset
 
 
 # ---------------------------------------------------------------------------

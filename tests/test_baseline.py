@@ -316,7 +316,7 @@ class TestRunBaselineOnDataset:
     @pytest.mark.slow
     def test_output_keys(self, tiny_dataset_path, k, n):
         result = run_baseline_on_dataset(tiny_dataset_path, k, n)
-        assert set(result.keys()) == {"p_hat_baselines", "tvd_adv", "tvd_true", "selected_subsets"}
+        assert set(result.keys()) == {"p_hat_baselines", "p_stars", "tvd_adv", "tvd_true", "selected_subsets"}
 
     @pytest.mark.slow
     def test_output_shapes(self, tiny_dataset_path, k, n):

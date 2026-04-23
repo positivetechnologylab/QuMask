@@ -7,7 +7,8 @@ data:
   n_val: 1000        # validation instances; seeds [8000, 9000)
   n_cal: 500         # conformal calibration instances; seeds [9000, 9500)
   n_test: 1000       # test instances; seeds [9500, 10500)
-  target_depth: 4    # base depth for target circuit; decoys sampled from U(0.75d, 1.25d)
+  target_depth_min: 1  # target circuit depth sampled per instance from U(target_depth_min, target_depth_max)
+  target_depth_max: 8  # decoy depths are then sampled from U(0.75d, 1.25d) relative to that instance's depth
 
 model:
   d_model: 64        # transformer embedding dimension

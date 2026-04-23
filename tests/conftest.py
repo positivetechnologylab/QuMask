@@ -95,21 +95,21 @@ def tiny_instance(k, n) -> dict:
           bitstrings (10,10,10) uint8, target_positions (10,3) int.
     """
     from data.simulate import generate_instance
-    return generate_instance(k=k, n=n, n_blocks=10, shots_per_block=10, target_depth=4, seed=0)
+    return generate_instance(k=k, n=n, n_blocks=10, shots_per_block=10, target_depth_min=4, target_depth_max=4, seed=0)
 
 
 @pytest.fixture(scope="session", params=[0, 1, 2])
 def tiny_instance_varied(k, n, request) -> dict:
     """Three tiny instances (seeds 0, 1, 2) — tests using this run once per seed."""
     from data.simulate import generate_instance
-    return generate_instance(k=k, n=n, n_blocks=10, shots_per_block=10, target_depth=4, seed=request.param)
+    return generate_instance(k=k, n=n, n_blocks=10, shots_per_block=10, target_depth_min=4, target_depth_max=4, seed=request.param)
 
 
 @pytest.fixture(scope="session")
 def tiny_instance_fixed(k, n) -> dict:
     """One fixed-position simulated instance: k=3, n=10, n_blocks=10, shots=10, seed=0."""
     from data.simulate import generate_instance_fixed
-    return generate_instance_fixed(k=k, n=n, n_blocks=10, shots_per_block=10, target_depth=4, seed=0)
+    return generate_instance_fixed(k=k, n=n, n_blocks=10, shots_per_block=10, target_depth_min=4, target_depth_max=4, seed=0)
 
 
 @pytest.fixture(scope="session")
@@ -119,7 +119,7 @@ def tiny_dataset_fixed_path(tmp_path_factory, k, n) -> str:
     path = str(tmp_path_factory.mktemp("data") / "tiny_dataset_fixed.npz")
     dataset = generate_dataset_fixed(
         n_instances=20, k=k, n=n, n_blocks=10, shots_per_block=10,
-        target_depth=4, seed_base=200, n_jobs=1,
+        target_depth_min=4, target_depth_max=4, seed_base=200, n_jobs=1,
     )
     save_dataset(dataset, path)
     return path
@@ -132,7 +132,7 @@ def tiny_dataset_path(tmp_path_factory, k, n) -> str:
     path = str(tmp_path_factory.mktemp("data") / "tiny_dataset.npz")
     dataset = generate_dataset(
         n_instances=20, k=k, n=n, n_blocks=10, shots_per_block=10,
-        target_depth=4, seed_base=100, n_jobs=1,
+        target_depth_min=4, target_depth_max=4, seed_base=100, n_jobs=1,
     )
     save_dataset(dataset, path)
     return path

@@ -180,6 +180,7 @@ def run_baseline_on_dataset(
 
     return {
         "p_hat_baselines": p_hat_baselines,
+        "p_stars": p_stars,
         "tvd_adv": tvd_adv,
         "tvd_true": tvd_true,
         "selected_subsets": selected_subsets,

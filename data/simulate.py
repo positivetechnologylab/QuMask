@@ -92,7 +92,8 @@ def generate_instance(
     n: int,
     n_blocks: int,
     shots_per_block: int,
-    target_depth: int,
+    target_depth_min: int,
+    target_depth_max: int,
     seed: int | None = None,
 ) -> dict[str, np.ndarray]:
     """Generate one complete training instance.
@@ -107,9 +108,12 @@ def generate_instance(
         n: Total system qubits.
         n_blocks: Number of blocks (default 1000).
         shots_per_block: Shots per block (default 10).
-        target_depth: Base circuit depth. Decoy depths are sampled per block via
-            ``randint(int(target_depth * 0.75), int(target_depth * 1.25))``
-            (inclusive on both ends), with ``max_operands=2``.
+        target_depth_min: Lower bound (inclusive) of the per-instance target
+            circuit depth range. Depth is drawn from
+            ``U(target_depth_min, target_depth_max)`` once per instance so that
+            the training set spans the full entropy spectrum.
+        target_depth_max: Upper bound (inclusive) of the per-instance target
+            circuit depth range.
         seed: Optional RNG seed for full reproducibility of this instance.
 
     Returns:
@@ -124,6 +128,9 @@ def generate_instance(
           qubit indices per block (retained for oracle marginal extraction).
     """
     rng = np.random.default_rng(seed)
+
+    # Draw target depth once per instance from the specified range.
+    target_depth = int(rng.integers(target_depth_min, target_depth_max + 1))
 
     # Seed stream: reserve one seed for the target circuit, then one per block
     # for decoy circuit generation and shot sampling.
@@ -187,7 +194,8 @@ def generate_dataset(
     n: int,
     n_blocks: int = 1000,
     shots_per_block: int = 10,
-    target_depth: int = 4,
+    target_depth_min: int = 1,
+    target_depth_max: int = 8,
     seed_base: int = 0,
     n_jobs: int = 1,
 ) -> dict[str, np.ndarray]:
@@ -203,7 +211,8 @@ def generate_dataset(
         n: Total system qubits.
         n_blocks: Number of blocks per instance.
         shots_per_block: Shots per block.
-        target_depth: Base target circuit depth.
+        target_depth_min: Lower bound of the per-instance target depth range.
+        target_depth_max: Upper bound of the per-instance target depth range.
         seed_base: Base seed; instance ``i`` uses ``seed_base + i``.
         n_jobs: Number of parallel worker processes (``joblib``). Set to 1 to
             disable parallelism (useful for debugging).
@@ -216,7 +225,7 @@ def generate_dataset(
         - ``"target_positions"``: shape ``(n_instances, n_blocks, k)``, int
     """
     results = Parallel(n_jobs=n_jobs)(
-        delayed(generate_instance)(k, n, n_blocks, shots_per_block, target_depth, seed=seed_base + i)
+        delayed(generate_instance)(k, n, n_blocks, shots_per_block, target_depth_min, target_depth_max, seed=seed_base + i)
         for i in range(n_instances)
     )
 
@@ -233,7 +242,8 @@ def generate_instance_fixed(
     n: int,
     n_blocks: int,
     shots_per_block: int,
-    target_depth: int,
+    target_depth_min: int,
+    target_depth_max: int,
     seed: int | None = None,
 ) -> dict[str, np.ndarray]:
     """Generate one training instance with the target circuit at a fixed qubit position.
@@ -249,7 +259,8 @@ def generate_instance_fixed(
         n: Total system qubits.
         n_blocks: Number of blocks.
         shots_per_block: Shots per block.
-        target_depth: Base circuit depth.
+        target_depth_min: Lower bound of the per-instance target depth range.
+        target_depth_max: Upper bound of the per-instance target depth range.
         seed: Optional RNG seed for full reproducibility.
 
     Returns:
@@ -261,6 +272,8 @@ def generate_instance_fixed(
           row is identical (the single fixed position used for all blocks).
     """
     rng = np.random.default_rng(seed)
+
+    target_depth = int(rng.integers(target_depth_min, target_depth_max + 1))
 
     target_circuit_seed = int(rng.integers(0, 2**31))
     target_circuit = random_circuit(k, target_depth, seed=target_circuit_seed)
@@ -317,7 +330,8 @@ def generate_dataset_fixed(
     n: int,
     n_blocks: int = 1000,
     shots_per_block: int = 10,
-    target_depth: int = 4,
+    target_depth_min: int = 1,
+    target_depth_max: int = 8,
     seed_base: int = 0,
     n_jobs: int = 1,
 ) -> dict[str, np.ndarray]:
@@ -335,7 +349,7 @@ def generate_dataset_fixed(
         - ``"target_positions"``: shape ``(n_instances, n_blocks, k)``, int
     """
     results = Parallel(n_jobs=n_jobs)(
-        delayed(generate_instance_fixed)(k, n, n_blocks, shots_per_block, target_depth, seed=seed_base + i)
+        delayed(generate_instance_fixed)(k, n, n_blocks, shots_per_block, target_depth_min, target_depth_max, seed=seed_base + i)
         for i in range(n_instances)
     )
 

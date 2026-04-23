@@ -3,22 +3,10 @@ Training entry point for the QuMask adversarial ML system.
 
 Usage
 -----
-    python train.py                          # uses config/default.yaml
-    python train.py --config path/to.yaml   # custom config
-    python train.py --generate-data          # regenerate training data before training
-
-Workflow
---------
-1. Load config from YAML.
-2. Optionally generate train/val/cal data splits via ``simulate.generate_dataset``
-   (skipped if .npz files already exist, unless --force-regenerate is passed).
-3. Construct DataLoaders via ``dataset.get_dataloaders``.
-4. Train M ensemble members via ``ensemble.train_all``, saving checkpoints to
-   ``cfg["paths"]["checkpoint_dir"]``.
-5. Print per-member training/validation loss curves to stdout.
-
-This script contains no model logic — it wires together the modules. All
-hyperparameters live in the config file.
+    python3 train.py                          # uses config/default.yaml
+    python3 train.py --config path/to.yaml   # custom config
+    python3 train.py --generate-data          # regenerate training data before training
+    python3 train.py --generate-data --force-regenerate  # overwrite existing data files
 """
 
 from __future__ import annotations
@@ -28,58 +16,85 @@ from pathlib import Path
 
 import yaml
 import torch
+from torch.utils.data import DataLoader
 
-from data.dataset import get_dataloaders
+from data.dataset import QuMaskDataset
 from data.simulate import generate_dataset, save_dataset
 from model.ensemble import train_all
 
 
 def parse_args() -> argparse.Namespace:
-    """Parse command-line arguments.
-
-    Returns:
-        Namespace with attributes:
-        - ``config``: str path to YAML config file (default: "config/default.yaml")
-        - ``generate_data``: bool — if True, regenerate data splits before training
-        - ``force_regenerate``: bool — if True, overwrite existing data files
-    """
-    ...
+    p = argparse.ArgumentParser()
+    p.add_argument("--config", default="config/default.yaml")
+    p.add_argument("--generate-data", action="store_true")
+    p.add_argument("--force-regenerate", action="store_true")
+    return p.parse_args()
 
 
 def load_config(path: str) -> dict:
-    """Load and return the YAML config as a nested dict.
-
-    Args:
-        path: Path to a YAML config file.
-
-    Returns:
-        Nested dict. Top-level keys: ``data``, ``model``, ``ensemble``,
-        ``training``, ``conformal``, ``paths``.
-    """
-    ...
+    with open(path) as f:
+        return yaml.safe_load(f)
 
 
 def maybe_generate_data(cfg: dict, force: bool = False) -> None:
-    """Generate train/val/cal dataset splits if they do not already exist.
+    data_dir = Path(cfg["paths"]["data_dir"])
+    data_dir.mkdir(parents=True, exist_ok=True)
 
-    Checks for ``{data_dir}/train.npz``, ``val.npz``, ``cal.npz``, and
-    ``test.npz``. Generates any that are missing (or all of them if
-    ``force=True``) using ``simulate.generate_dataset``.
+    splits = [
+        ("train.npz", cfg["data"]["n_train"], cfg["paths"]["seed_train"]),
+        ("val.npz",   cfg["data"]["n_val"],   cfg["paths"]["seed_val"]),
+        ("cal.npz",   cfg["data"]["n_cal"],   cfg["paths"]["seed_cal"]),
+        ("test.npz",  cfg["data"]["n_test"],  cfg["paths"]["seed_test"]),
+    ]
 
-    Args:
-        cfg: Full config dict.
-        force: If True, regenerate all splits even if files exist.
-    """
-    ...
+    d = cfg["data"]
+    for filename, n_instances, seed_base in splits:
+        path = data_dir / filename
+        if path.exists() and not force:
+            print(f"  {path} exists, skipping")
+            continue
+        print(f"  generating {path} ({n_instances} instances, seed_base={seed_base})")
+        dataset = generate_dataset(
+            n_instances=n_instances,
+            k=d["k"],
+            n=d["n"],
+            n_blocks=d["n_blocks"],
+            shots_per_block=d["shots_per_block"],
+            target_depth_min=d["target_depth_min"],
+            target_depth_max=d["target_depth_max"],
+            seed_base=seed_base,
+            n_jobs=-1,
+        )
+        save_dataset(dataset, str(path))
 
 
 def main() -> None:
-    """Main training entry point.
+    args = parse_args()
+    cfg = load_config(args.config)
 
-    Loads config, optionally generates data, constructs DataLoaders, trains the
-    ensemble, and prints a summary of training loss curves and checkpoint paths.
-    """
-    ...
+    if args.generate_data:
+        print("Generating data splits...")
+        maybe_generate_data(cfg, force=args.force_regenerate)
+
+    data_dir = Path(cfg["paths"]["data_dir"])
+    tr = cfg["training"]
+    kwargs = dict(batch_size=tr["batch_size"], num_workers=0, pin_memory=torch.cuda.is_available())
+
+    train_loader = DataLoader(QuMaskDataset(str(data_dir / "train.npz")), shuffle=True, **kwargs)
+    val_loader   = DataLoader(QuMaskDataset(str(data_dir / "val.npz")),   shuffle=False, **kwargs)
+
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    print(f"Training on {device}")
+
+    ensemble = train_all(
+        cfg=cfg,
+        train_loader=train_loader,
+        val_loader=val_loader,
+        checkpoint_dir=cfg["paths"]["checkpoint_dir"],
+        device=device,
+    )
+
+    print(f"\nTrained {ensemble.M} members. Checkpoints saved to {cfg['paths']['checkpoint_dir']}/")
 
 
 if __name__ == "__main__":

@@ -197,14 +197,14 @@ class TestGenerateInstance:
         assert len(set(rows)) > 1, "all blocks have identical target positions — RNG may be broken"
 
     def test_determinism(self, k, n):
-        a = generate_instance(k=k, n=n, n_blocks=5, shots_per_block=10, target_depth=4, seed=7)
-        b = generate_instance(k=k, n=n, n_blocks=5, shots_per_block=10, target_depth=4, seed=7)
+        a = generate_instance(k=k, n=n, n_blocks=5, shots_per_block=10, target_depth_min=4, target_depth_max=4, seed=7)
+        b = generate_instance(k=k, n=n, n_blocks=5, shots_per_block=10, target_depth_min=4, target_depth_max=4, seed=7)
         for key in a:
             np.testing.assert_array_equal(a[key], b[key], err_msg=f"mismatch in '{key}'")
 
     def test_different_seeds_differ(self, k, n):
-        a = generate_instance(k=k, n=n, n_blocks=5, shots_per_block=10, target_depth=4, seed=0)
-        b = generate_instance(k=k, n=n, n_blocks=5, shots_per_block=10, target_depth=4, seed=1)
+        a = generate_instance(k=k, n=n, n_blocks=5, shots_per_block=10, target_depth_min=4, target_depth_max=4, seed=0)
+        b = generate_instance(k=k, n=n, n_blocks=5, shots_per_block=10, target_depth_min=4, target_depth_max=4, seed=1)
         assert not np.array_equal(a["p_star"], b["p_star"])
         assert not np.array_equal(a["bitstrings"], b["bitstrings"])
 
@@ -230,7 +230,7 @@ class TestGenerateInstance:
         so 5-sigma tolerance of 0.035 is very conservative.
         """
         inst = generate_instance(k=k, n=n, n_blocks=1, shots_per_block=5000,
-                                 target_depth=4, seed=42)
+                                 target_depth_min=4, target_depth_max=4, seed=42)
         p_star = inst["p_star"]
         bits = inst["bitstrings"][0]           # (5000, n)
         pos = inst["target_positions"][0]      # (k,) ordered mapping: circuit qubit i → column pos[i]
@@ -249,7 +249,7 @@ class TestGenerateInstance:
         the target).
         """
         inst = generate_instance(k=k, n=n, n_blocks=1, shots_per_block=5000,
-                                 target_depth=4, seed=13)
+                                 target_depth_min=4, target_depth_max=4, seed=13)
         p_star = inst["p_star"]
         pos = inst["target_positions"][0]
         all_cols = set(range(n))
@@ -271,7 +271,7 @@ class TestGenerateInstance:
         n_blocks = 20
         shots = 200
         inst = generate_instance(k=k, n=n, n_blocks=n_blocks, shots_per_block=shots,
-                                 target_depth=4, seed=55)
+                                 target_depth_min=4, target_depth_max=4, seed=55)
         p_star = inst["p_star"]
         # Compute per-block empirical marginal
         block_marginals = []
@@ -305,7 +305,7 @@ class TestGenerateInstance:
         on average for a generic 4-outcome distribution, well above the 0.05 atol.
         """
         inst = generate_instance(k=2, n=4, n_blocks=30, shots_per_block=500,
-                                 target_depth=4, seed=77)
+                                 target_depth_min=4, target_depth_max=4, seed=77)
         p_star = inst["p_star"]   # (4,)
         total_shots = 30 * 500
         counts = np.zeros(4, dtype=np.int64)
@@ -323,11 +323,46 @@ class TestGenerateInstance:
 
     def test_no_unseeded_call_changes_output(self, k, n):
         """Unseeded calls should still differ from each other (entropy from OS)."""
-        a = generate_instance(k=k, n=n, n_blocks=3, shots_per_block=5, target_depth=4, seed=None)
-        b = generate_instance(k=k, n=n, n_blocks=3, shots_per_block=5, target_depth=4, seed=None)
+        a = generate_instance(k=k, n=n, n_blocks=3, shots_per_block=5, target_depth_min=4, target_depth_max=4, seed=None)
+        b = generate_instance(k=k, n=n, n_blocks=3, shots_per_block=5, target_depth_min=4, target_depth_max=4, seed=None)
         # Not guaranteed to differ, but seeded None draws from OS entropy — extremely
         # unlikely to collide.
         assert not np.array_equal(a["bitstrings"], b["bitstrings"])
+
+    def test_depth_varies_across_instances_in_range(self, k, n):
+        """When target_depth_min < target_depth_max, p_stars must span a wide entropy range.
+
+        Generate 30 instances with depth drawn from U(1, 8). Compute the Shannon
+        entropy of each p_star. With depth 1 some circuits are nearly concentrated
+        and with depth 8 some are near-uniform, so the entropy range across
+        instances should be at least 0.5 nats wide. If depth were fixed this
+        spread would be much smaller.
+        """
+        n_inst = 30
+        entropies = []
+        for i in range(n_inst):
+            inst = generate_instance(k=k, n=n, n_blocks=1, shots_per_block=1,
+                                     target_depth_min=1, target_depth_max=8, seed=i)
+            p = inst["p_star"]
+            entropies.append(float(-np.sum(p * np.log(p + 1e-12))))
+        entropy_range = max(entropies) - min(entropies)
+        assert entropy_range > 0.5, (
+            f"Entropy range across {n_inst} instances is only {entropy_range:.3f} nats — "
+            "depth may not be varying per instance"
+        )
+
+    def test_depth_fixed_when_min_equals_max(self, k, n):
+        """When target_depth_min == target_depth_max, all instances use that exact depth.
+
+        Two instances with the same seed must be identical (determinism), and the
+        p_stars should still vary across seeds since the circuit gates are random.
+        """
+        a = generate_instance(k=k, n=n, n_blocks=3, shots_per_block=5,
+                              target_depth_min=4, target_depth_max=4, seed=0)
+        b = generate_instance(k=k, n=n, n_blocks=3, shots_per_block=5,
+                              target_depth_min=4, target_depth_max=4, seed=0)
+        np.testing.assert_array_equal(a["p_star"], b["p_star"])
+        np.testing.assert_array_equal(a["bitstrings"], b["bitstrings"])
 
 
 # ---------------------------------------------------------------------------
@@ -359,27 +394,27 @@ class TestGenerateDataset:
 
     def test_determinism_via_seed_base(self, k, n):
         a = generate_dataset(n_instances=3, k=k, n=n, n_blocks=5,
-                             shots_per_block=5, target_depth=4, seed_base=0, n_jobs=1)
+                             shots_per_block=5, target_depth_min=4, target_depth_max=4, seed_base=0, n_jobs=1)
         b = generate_dataset(n_instances=3, k=k, n=n, n_blocks=5,
-                             shots_per_block=5, target_depth=4, seed_base=0, n_jobs=1)
+                             shots_per_block=5, target_depth_min=4, target_depth_max=4, seed_base=0, n_jobs=1)
         for key in a:
             np.testing.assert_array_equal(a[key], b[key], err_msg=f"non-determinism in '{key}'")
 
     def test_seed_base_offset_produces_different_instances(self, k, n):
         a = generate_dataset(n_instances=2, k=k, n=n, n_blocks=5,
-                             shots_per_block=5, target_depth=4, seed_base=0, n_jobs=1)
+                             shots_per_block=5, target_depth_min=4, target_depth_max=4, seed_base=0, n_jobs=1)
         b = generate_dataset(n_instances=2, k=k, n=n, n_blocks=5,
-                             shots_per_block=5, target_depth=4, seed_base=50, n_jobs=1)
+                             shots_per_block=5, target_depth_min=4, target_depth_max=4, seed_base=50, n_jobs=1)
         assert not np.array_equal(a["p_stars"], b["p_stars"])
 
     def test_instance_i_matches_generate_instance(self, k, n):
         """generate_dataset instance i must equal generate_instance(seed=seed_base+i)."""
         seed_base = 7
         ds = generate_dataset(n_instances=3, k=k, n=n, n_blocks=5,
-                              shots_per_block=5, target_depth=4, seed_base=seed_base, n_jobs=1)
+                              shots_per_block=5, target_depth_min=4, target_depth_max=4, seed_base=seed_base, n_jobs=1)
         for i in range(3):
             inst = generate_instance(k=k, n=n, n_blocks=5, shots_per_block=5,
-                                     target_depth=4, seed=seed_base + i)
+                                     target_depth_min=4, target_depth_max=4, seed=seed_base + i)
             np.testing.assert_array_equal(ds["features"][i], inst["features"],
                                           err_msg=f"features mismatch at instance {i}")
             np.testing.assert_array_equal(ds["p_stars"][i], inst["p_star"],
@@ -482,21 +517,21 @@ class TestGenerateInstanceFixed:
         assert np.all(tp == tp[0]), "target positions are not constant across blocks"
 
     def test_determinism(self, k, n):
-        a = generate_instance_fixed(k=k, n=n, n_blocks=5, shots_per_block=10, target_depth=4, seed=7)
-        b = generate_instance_fixed(k=k, n=n, n_blocks=5, shots_per_block=10, target_depth=4, seed=7)
+        a = generate_instance_fixed(k=k, n=n, n_blocks=5, shots_per_block=10, target_depth_min=4, target_depth_max=4, seed=7)
+        b = generate_instance_fixed(k=k, n=n, n_blocks=5, shots_per_block=10, target_depth_min=4, target_depth_max=4, seed=7)
         for key in a:
             np.testing.assert_array_equal(a[key], b[key], err_msg=f"mismatch in '{key}'")
 
     def test_different_seeds_differ(self, k, n):
-        a = generate_instance_fixed(k=k, n=n, n_blocks=5, shots_per_block=10, target_depth=4, seed=0)
-        b = generate_instance_fixed(k=k, n=n, n_blocks=5, shots_per_block=10, target_depth=4, seed=1)
+        a = generate_instance_fixed(k=k, n=n, n_blocks=5, shots_per_block=10, target_depth_min=4, target_depth_max=4, seed=0)
+        b = generate_instance_fixed(k=k, n=n, n_blocks=5, shots_per_block=10, target_depth_min=4, target_depth_max=4, seed=1)
         assert not np.array_equal(a["p_star"], b["p_star"])
         assert not np.array_equal(a["bitstrings"], b["bitstrings"])
 
     def test_target_columns_match_p_star_statistically(self, k, n):
         """Empirical marginal over the fixed target columns must be close to p_star."""
         inst = generate_instance_fixed(k=k, n=n, n_blocks=1, shots_per_block=5000,
-                                       target_depth=4, seed=42)
+                                       target_depth_min=4, target_depth_max=4, seed=42)
         p_star = inst["p_star"]
         bits = inst["bitstrings"][0]       # (5000, n)
         pos = inst["target_positions"][0]  # (k,)
@@ -511,7 +546,7 @@ class TestGenerateInstanceFixed:
         n_blocks = 20
         shots = 200
         inst = generate_instance_fixed(k=k, n=n, n_blocks=n_blocks, shots_per_block=shots,
-                                       target_depth=4, seed=55)
+                                       target_depth_min=4, target_depth_max=4, seed=55)
         p_star = inst["p_star"]
         for b in range(n_blocks):
             pos = inst["target_positions"][b]  # identical for all b
@@ -530,7 +565,7 @@ class TestGenerateInstanceFixed:
         ordering is preserved when interleaving bitstrings.
         """
         inst = generate_instance_fixed(k=2, n=4, n_blocks=30, shots_per_block=500,
-                                       target_depth=4, seed=77)
+                                       target_depth_min=4, target_depth_max=4, seed=77)
         p_star = inst["p_star"]
         total_shots = 30 * 500
         counts = np.zeros(4, dtype=np.int64)
@@ -552,9 +587,9 @@ class TestGenerateInstanceFixed:
         once vs. once per block), so bitstrings will diverge.
         """
         fixed = generate_instance_fixed(k=k, n=n, n_blocks=10, shots_per_block=10,
-                                        target_depth=4, seed=42)
+                                        target_depth_min=4, target_depth_max=4, seed=42)
         varying = generate_instance(k=k, n=n, n_blocks=10, shots_per_block=10,
-                                    target_depth=4, seed=42)
+                                    target_depth_min=4, target_depth_max=4, seed=42)
         # target_positions should not all match between the two
         assert not np.all(fixed["target_positions"] == varying["target_positions"]) or \
                not np.array_equal(fixed["bitstrings"], varying["bitstrings"]), \
@@ -596,27 +631,27 @@ class TestGenerateDatasetFixed:
 
     def test_determinism_via_seed_base(self, k, n):
         a = generate_dataset_fixed(n_instances=3, k=k, n=n, n_blocks=5,
-                                   shots_per_block=5, target_depth=4, seed_base=0, n_jobs=1)
+                                   shots_per_block=5, target_depth_min=4, target_depth_max=4, seed_base=0, n_jobs=1)
         b = generate_dataset_fixed(n_instances=3, k=k, n=n, n_blocks=5,
-                                   shots_per_block=5, target_depth=4, seed_base=0, n_jobs=1)
+                                   shots_per_block=5, target_depth_min=4, target_depth_max=4, seed_base=0, n_jobs=1)
         for key in a:
             np.testing.assert_array_equal(a[key], b[key], err_msg=f"non-determinism in '{key}'")
 
     def test_seed_base_offset_produces_different_instances(self, k, n):
         a = generate_dataset_fixed(n_instances=2, k=k, n=n, n_blocks=5,
-                                   shots_per_block=5, target_depth=4, seed_base=0, n_jobs=1)
+                                   shots_per_block=5, target_depth_min=4, target_depth_max=4, seed_base=0, n_jobs=1)
         b = generate_dataset_fixed(n_instances=2, k=k, n=n, n_blocks=5,
-                                   shots_per_block=5, target_depth=4, seed_base=50, n_jobs=1)
+                                   shots_per_block=5, target_depth_min=4, target_depth_max=4, seed_base=50, n_jobs=1)
         assert not np.array_equal(a["p_stars"], b["p_stars"])
 
     def test_instance_i_matches_generate_instance_fixed(self, k, n):
         """generate_dataset_fixed instance i must equal generate_instance_fixed(seed=seed_base+i)."""
         seed_base = 7
         ds = generate_dataset_fixed(n_instances=3, k=k, n=n, n_blocks=5,
-                                    shots_per_block=5, target_depth=4, seed_base=seed_base, n_jobs=1)
+                                    shots_per_block=5, target_depth_min=4, target_depth_max=4, seed_base=seed_base, n_jobs=1)
         for i in range(3):
             inst = generate_instance_fixed(k=k, n=n, n_blocks=5, shots_per_block=5,
-                                           target_depth=4, seed=seed_base + i)
+                                           target_depth_min=4, target_depth_max=4, seed=seed_base + i)
             np.testing.assert_array_equal(ds["features"][i], inst["features"],
                                           err_msg=f"features mismatch at instance {i}")
             np.testing.assert_array_equal(ds["p_stars"][i], inst["p_star"],

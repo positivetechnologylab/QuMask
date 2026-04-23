@@ -1,10 +1,11 @@
 """
 Tests for utils/metrics.py
 
-This module covers all five public functions: tvd, kl_divergence, ece,
-empirical_marginal, and compute_all_metrics. All functions are pure numpy with
-no Qiskit dependency, so no tests here are marked slow. Use the conftest
-fixtures `uniform_dist`, `peaked_dist`, `any_dist`, and `synthetic_bitstrings`.
+This module covers all five public functions: tvd, kl_divergence,
+sigma_calibration_error, empirical_marginal, and compute_all_metrics. All
+functions are pure numpy with no Qiskit dependency, so no tests here are
+marked slow. Use the conftest fixtures `uniform_dist`, `peaked_dist`,
+`any_dist`, and `synthetic_bitstrings`.
 """
 
 import numpy as np
@@ -12,7 +13,7 @@ import pytest
 
 from utils.metrics import (
     compute_all_metrics,
-    ece,
+    sigma_calibration_error,
     empirical_marginal,
     kl_divergence,
     tvd,
@@ -80,7 +81,7 @@ class TestKlDivergence:
             )
 
 
-class TestEce:
+class TestSigmaCalibrationError:
     def test_perfect_calibration_near_zero(self):
         # sigma equals absolute error exactly for every element
         rng = np.random.default_rng(0)
@@ -88,10 +89,10 @@ class TestEce:
         p_stars = rng.dirichlet(np.ones(d), size=N)
         p_hats = rng.dirichlet(np.ones(d), size=N)
         sigmas = np.abs(p_hats - p_stars)
-        result = ece(p_hats, p_stars, sigmas)
+        result = sigma_calibration_error(p_hats, p_stars, sigmas)
         assert result == pytest.approx(0.0, abs=1e-10)
 
-    def test_nonzero_sigma_wrong_predictions_large_ece(self):
+    def test_nonzero_sigma_wrong_predictions_large_sigma_calibration_error(self):
         # sigma is small but nonzero so bins are well-defined; predictions are
         # maximally wrong, so observed error >> expected error → large ECE
         N, d = 10, 8
@@ -100,7 +101,7 @@ class TestEce:
         p_hats = np.zeros((N, d))
         p_hats[:, -1] = 1.0
         sigmas = np.full((N, d), 0.01)
-        result = ece(p_hats, p_stars, sigmas)
+        result = sigma_calibration_error(p_hats, p_stars, sigmas)
         assert result > 0.0
 
     def test_non_negative(self):
@@ -109,7 +110,7 @@ class TestEce:
         p_hats = rng.dirichlet(np.ones(d), size=N)
         p_stars = rng.dirichlet(np.ones(d), size=N)
         sigmas = rng.uniform(0, 0.1, size=(N, d))
-        assert ece(p_hats, p_stars, sigmas) >= 0.0
+        assert sigma_calibration_error(p_hats, p_stars, sigmas) >= 0.0
 
     def test_empty_bins_no_nan(self):
         # All sigma values are identical → all land in one bin, rest are empty
@@ -117,7 +118,7 @@ class TestEce:
         p_hats = np.ones((N, d)) / d
         p_stars = np.ones((N, d)) / d
         sigmas = np.full((N, d), 0.01)
-        result = ece(p_hats, p_stars, sigmas, n_bins=15)
+        result = sigma_calibration_error(p_hats, p_stars, sigmas, n_bins=15)
         assert np.isfinite(result)
 
     def test_shape_contract(self):
@@ -127,7 +128,7 @@ class TestEce:
             p_hats = rng.dirichlet(np.ones(d), size=N)
             p_stars = rng.dirichlet(np.ones(d), size=N)
             sigmas = rng.uniform(0, 0.05, size=(N, d))
-            result = ece(p_hats, p_stars, sigmas)
+            result = sigma_calibration_error(p_hats, p_stars, sigmas)
             assert np.isscalar(result) or result.ndim == 0
 
 

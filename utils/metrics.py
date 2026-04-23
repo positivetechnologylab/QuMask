@@ -56,40 +56,43 @@ def kl_divergence(p: np.ndarray, q: np.ndarray, eps: float = 1e-12) -> float:
     return float(np.sum(p[mask] * np.log(p[mask] / (q[mask] + eps))))
 
 
-def ece(
+def sigma_calibration_error(
     p_hats: np.ndarray,
     p_stars: np.ndarray,
     sigmas: np.ndarray,
     n_bins: int = 15,
 ) -> float:
-    """Expected Calibration Error for per-bin uncertainty estimates.
+    """Sigma calibration error for per-bin ensemble uncertainty estimates.
 
-    Measures whether the ensemble's per-bin standard deviations are honest
-    predictors of actual per-bin errors. Bins predictions by confidence level
-    and computes the weighted mean absolute gap between expected and observed
+    Checks whether the ensemble's per-bin standard deviations (sigmas) are
+    honest predictors of per-bin absolute errors. Bins (prediction, sigma)
+    pairs by sigma magnitude using equal-frequency buckets, then computes the
+    weighted mean absolute gap between the mean sigma and the mean absolute
     error within each bin.
+
+    This is NOT standard ECE (which bins by confidence and checks accuracy).
+    It is a calibration check specifically for the sigma uncertainty estimates:
+    a well-calibrated ensemble should have sigma ≈ |p̂ - p*| on average within
+    each bin.
 
     Args:
         p_hats: Model point estimates, shape ``(N, 2**k)``.
         p_stars: True distributions, shape ``(N, 2**k)``.
         sigmas: Per-bin standard deviations from the ensemble, shape ``(N, 2**k)``.
-        n_bins: Number of equal-width confidence bins.
+        n_bins: Number of equal-frequency sigma bins.
 
     Returns:
-        Non-negative scalar. Lower is better; 0 means perfect calibration.
+        Non-negative scalar. Lower is better; 0 means perfect sigma calibration.
     """
     # Flatten to (N * 2**k,) element-wise: each (prediction, sigma) pair is one sample
     pred = p_hats.ravel()
     true = p_stars.ravel()
     sigma = sigmas.ravel()
 
-    # Use sigma as the "confidence" axis for binning (equal-frequency buckets)
     percentiles = np.linspace(0, 100, n_bins + 1)
     bin_edges = np.percentile(sigma, percentiles)
-    if bin_edges[-1] == bin_edges[0]:
-        return 0.0
     total = len(pred)
-    ece_val = 0.0
+    err = 0.0
     for i, (lo, hi) in enumerate(zip(bin_edges[:-1], bin_edges[1:])):
         last_bin = i == n_bins - 1
         mask = (sigma >= lo) & (sigma <= hi if last_bin else sigma < hi)
@@ -97,8 +100,8 @@ def ece(
             continue
         expected_err = sigma[mask].mean()
         observed_err = np.abs(pred[mask] - true[mask]).mean()
-        ece_val += mask.sum() / total * abs(expected_err - observed_err)
-    return float(ece_val)
+        err += mask.sum() / total * abs(expected_err - observed_err)
+    return float(err)
 
 
 def empirical_marginal(

@@ -221,6 +221,7 @@ def train_single_member(
             if epochs_no_improve >= patience:
                 break
 
+    assert best_state is not None, "Training produced NaN loss on every epoch; no checkpoint was saved."
     model.load_state_dict(best_state)
     return model, history
 
