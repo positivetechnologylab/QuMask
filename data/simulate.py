@@ -237,6 +237,44 @@ def generate_dataset(
     }
 
 
+def run_red_herring_block(
+    n: int,
+    depth_lo: int,
+    depth_hi: int,
+    shots_per_block: int,
+    rng: np.random.Generator,
+) -> np.ndarray:
+    """Sample one block of shots with all n qubits running random walk circuits.
+
+    Partitions all n qubits via random_decoy_partition (same method as decoy
+    generation) and samples each group independently. There is no target signal.
+
+    Returns:
+        uint8 array of shape ``(shots_per_block, n)``.
+    """
+    all_qubits = np.arange(n)
+    groups = random_decoy_partition(all_qubits, rng)
+
+    bits_list = []
+    positions_list = []
+    for group in groups:
+        g = len(group)
+        depth = int(rng.integers(depth_lo, depth_hi + 1))
+        circuit_seed = int(rng.integers(0, 2**31))
+        circuit = random_circuit(g, depth, seed=circuit_seed)
+        p = statevector_distribution(circuit)
+        shot_seed = int(rng.integers(0, 2**31))
+        bits_list.append(sample_shots(p, shots_per_block, seed=shot_seed))
+        positions_list.append(group)
+
+    # Interleave using a dummy empty target (no target qubits).
+    dummy_target_bits = np.empty((shots_per_block, 0), dtype=np.uint8)
+    dummy_target_pos = np.empty(0, dtype=int)
+    return interleave_bitstrings(
+        dummy_target_bits, bits_list, dummy_target_pos, positions_list, n
+    )
+
+
 def generate_instance_fixed(
     k: int,
     n: int,
@@ -244,6 +282,7 @@ def generate_instance_fixed(
     shots_per_block: int,
     target_depth_min: int,
     target_depth_max: int,
+    num_red_herring_blocks: int = 0,
     seed: int | None = None,
 ) -> dict[str, np.ndarray]:
     """Generate one training instance with the target circuit at a fixed qubit position.
@@ -257,19 +296,24 @@ def generate_instance_fixed(
     Args:
         k: Number of target qubits.
         n: Total system qubits.
-        n_blocks: Number of blocks.
+        n_blocks: Number of real (target-carrying) blocks.
         shots_per_block: Shots per block.
         target_depth_min: Lower bound of the per-instance target depth range.
         target_depth_max: Upper bound of the per-instance target depth range.
+        num_red_herring_blocks: Number of fully-randomized blocks to interleave.
+            These carry no target signal. Default 0 (no red herrings).
         seed: Optional RNG seed for full reproducibility.
 
     Returns:
-        Dict with the same keys as ``generate_instance``:
-        - ``"features"``: float32 array of shape ``(n_blocks, F)``.
+        Dict with keys:
+        - ``"features"``: float32 array of shape ``(total_blocks, F)`` where
+          ``total_blocks = n_blocks + num_red_herring_blocks``.
         - ``"p_star"``: float64 array of shape ``(2**k,)``.
-        - ``"bitstrings"``: uint8 array of shape ``(n_blocks, shots_per_block, n)``.
-        - ``"target_positions"``: int array of shape ``(n_blocks, k)`` — every
-          row is identical (the single fixed position used for all blocks).
+        - ``"bitstrings"``: uint8 array of shape ``(total_blocks, shots_per_block, n)``.
+        - ``"target_positions"``: int array of shape ``(total_blocks, k)`` — every
+          row is the fixed target position (RH rows store it too, for dtype consistency).
+        - ``"red_herring_mask"``: bool array of shape ``(total_blocks,)`` — True
+          for red herring slots, False for real blocks.
     """
     rng = np.random.default_rng(seed)
 
@@ -282,15 +326,27 @@ def generate_instance_fixed(
     depth_lo = int(target_depth * 0.75)
     depth_hi = int(target_depth * 1.25)
 
-    # Draw target position once; tile across all blocks.
+    # Draw target position once; fixed for all real blocks.
     target_pos = rng.choice(n, size=k, replace=False)
-    target_positions_all = np.tile(target_pos, (n_blocks, 1))
 
-    bitstrings = np.empty((n_blocks, shots_per_block, n), dtype=np.uint8)
+    total_blocks = n_blocks + num_red_herring_blocks
 
-    for b in range(n_blocks):
+    # Randomly assign which slots are red herrings.
+    rh_mask = np.zeros(total_blocks, dtype=bool)
+    if num_red_herring_blocks > 0:
+        rh_indices = rng.permutation(total_blocks)[:num_red_herring_blocks]
+        rh_mask[rh_indices] = True
+
+    target_positions_all = np.tile(target_pos, (total_blocks, 1))
+    bitstrings = np.empty((total_blocks, shots_per_block, n), dtype=np.uint8)
+
+    for b in range(total_blocks):
         block_seed = int(rng.integers(0, 2**31))
         block_rng = np.random.default_rng(block_seed)
+
+        if rh_mask[b]:
+            bitstrings[b] = run_red_herring_block(n, depth_lo, depth_hi, shots_per_block, block_rng)
+            continue
 
         target_shot_seed = int(block_rng.integers(0, 2**31))
         target_bits = sample_shots(p_star, shots_per_block, seed=target_shot_seed)
@@ -321,6 +377,7 @@ def generate_instance_fixed(
         "p_star": p_star,
         "bitstrings": bitstrings,
         "target_positions": target_positions_all,
+        "red_herring_mask": rh_mask,
     }
 
 
