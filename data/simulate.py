@@ -138,7 +138,7 @@ def generate_instance(
     target_circuit = random_circuit(k, target_depth, seed=target_circuit_seed)
     p_star = statevector_distribution(target_circuit)
 
-    depth_lo = int(target_depth * 0.75)
+    depth_lo = max(1, int(target_depth * 0.75))
     depth_hi = int(target_depth * 1.25)
 
     bitstrings = np.empty((n_blocks, shots_per_block, n), dtype=np.uint8)
@@ -323,7 +323,7 @@ def generate_instance_fixed(
     target_circuit = random_circuit(k, target_depth, seed=target_circuit_seed)
     p_star = statevector_distribution(target_circuit)
 
-    depth_lo = int(target_depth * 0.75)
+    depth_lo = max(1, int(target_depth * 0.75))
     depth_hi = int(target_depth * 1.25)
 
     # Draw target position once; fixed for all real blocks.
