@@ -1,0 +1,36 @@
+conformal:
+  alpha: 0.05
+data:
+  k: 3
+  n: 15
+  n_blocks: 1000
+  n_cal: 500
+  n_test: 1000
+  n_train: 8000
+  n_val: 1000
+  shots_per_block: 10
+  target_depth_max: 8
+  target_depth_min: 1
+ensemble:
+  M: 3
+model:
+  d_ff: 128
+  d_model: 64
+  dropout: 0.1
+  n_heads: 4
+  n_layers: 2
+paths:
+  checkpoint_dir: checkpoints/n15_k3
+  data_dir: data/processed/n15_k3
+  results_dir: results/n15_k3
+  seed_cal: 9000
+  seed_test: 9500
+  seed_train: 0
+  seed_val: 8000
+training:
+  batch_size: 64
+  epochs: 100
+  lr: 0.001
+  patience: 10
+  seed_base: 42
+  weight_decay: 0.0001

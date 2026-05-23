@@ -232,11 +232,18 @@ def train_all(
     val_loader: DataLoader,
     checkpoint_dir: str,
     device: torch.device | None = None,
+    volume=None,
 ) -> QuMaskEnsemble:
     """Train a full ensemble of M members sequentially.
 
     Instantiates M models via ``build_model_from_config``, trains each with
     ``train_single_member``, saves checkpoints, and returns a ``QuMaskEnsemble``.
+
+    Checkpointing: each member's weights are saved to
+    ``{checkpoint_dir}/member_{m}.pt`` immediately after training, before the
+    next member begins. If a checkpoint already exists for member m (e.g. after
+    a job restart), training is skipped and the saved weights are loaded. This
+    makes ensemble training fully resumable after interruption.
 
     Args:
         cfg: Config dict from ``config/default.yaml``.
@@ -244,6 +251,9 @@ def train_all(
         val_loader: Validation DataLoader.
         checkpoint_dir: Directory to save per-member checkpoints.
         device: Training device. Defaults to CUDA if available, else CPU.
+        volume: Optional Modal volume. If provided, ``volume.commit()`` is
+            called after each member checkpoint is saved so that progress is
+            persisted to the volume incrementally rather than all at the end.
 
     Returns:
         Trained ``QuMaskEnsemble`` with all M members loaded.
@@ -257,9 +267,19 @@ def train_all(
     seed_base = cfg["training"]["seed_base"]
     tr = cfg["training"]
     checkpoint_path = Path(checkpoint_dir)
+    checkpoint_path.mkdir(parents=True, exist_ok=True)
 
     trained_models = []
     for m in range(M):
+        ckpt_path = checkpoint_path / f"member_{m}.pt"
+        if ckpt_path.exists():
+            print(f"member_{m}: checkpoint found, skipping training")
+            model = build_model_from_config(cfg)
+            model.load_state_dict(torch.load(str(ckpt_path), map_location=device, weights_only=True))
+            model.to(device).eval()
+            trained_models.append(model)
+            continue
+
         model = build_model_from_config(cfg)
         model, _ = train_single_member(
             model=model,
@@ -272,11 +292,13 @@ def train_all(
             device=device,
             seed=seed_base + m,
         )
+        # Save immediately so a crash before the next member doesn't lose this one.
+        torch.save(model.state_dict(), str(ckpt_path))
+        if volume is not None:
+            volume.commit()
         trained_models.append(model)
 
-    ensemble = QuMaskEnsemble(trained_models)
-    ensemble.save(checkpoint_dir)
-    return ensemble
+    return QuMaskEnsemble(trained_models)
 
 
 def load_ensemble(
