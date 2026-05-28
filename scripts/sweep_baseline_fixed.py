@@ -33,7 +33,8 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--n", type=int, default=10)
     p.add_argument("--n-blocks", type=int, default=100)
     p.add_argument("--shots-per-block", type=int, default=10)
-    p.add_argument("--target-depth", type=int, default=4)
+    p.add_argument("--target-depth-min", type=int, default=4)
+    p.add_argument("--target-depth-max", type=int, default=4)
     p.add_argument("--seed-base", type=int, default=0)
     return p.parse_args()
 
@@ -51,7 +52,8 @@ def main() -> None:
             k=k, n=n,
             n_blocks=args.n_blocks,
             shots_per_block=args.shots_per_block,
-            target_depth=args.target_depth,
+            target_depth_min=args.target_depth_min,
+            target_depth_max=args.target_depth_max,
             seed=args.seed_base + i,
         )
 

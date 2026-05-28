@@ -43,6 +43,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--n-blocks", type=int, default=100)
     p.add_argument("--shots-per-block", type=int, default=10)
     p.add_argument("--target-depth", type=int, default=4)
+    p.add_argument("--num-red-herring-blocks", type=int, default=0)
     p.add_argument("--out", type=str, default="demo_baseline_fixed.txt")
     return p.parse_args()
 
@@ -62,14 +63,16 @@ def main() -> None:
         k=k, n=n,
         n_blocks=args.n_blocks,
         shots_per_block=args.shots_per_block,
-        target_depth=args.target_depth,
+        target_depth_min=args.target_depth,
+        target_depth_max=args.target_depth,
+        num_red_herring_blocks=args.num_red_herring_blocks,
         seed=args.seed,
     )
 
-    bitstrings = inst["bitstrings"]              # (n_blocks, shots, n)
+    bitstrings = inst["bitstrings"]              # (total_blocks, shots, n)
     p_star = inst["p_star"]                      # (2**k,) exact theoretical distribution
-    target_positions = inst["target_positions"]  # (n_blocks, k) — all rows identical
-    target_circuit = inst["target_circuit"]      # Qiskit QuantumCircuit object
+    target_positions = inst["target_positions"]  # (total_blocks, k) — all rows identical
+    rh_mask = inst["red_herring_mask"]           # (total_blocks,) bool
 
     # true_subset_ordered: preserves the MSB-first circuit orientation, used for
     # marginal extraction (qubit order determines which bit maps to which bin).
@@ -111,13 +114,16 @@ def main() -> None:
     w(sep)
     w("INSTANCE PARAMETERS")
     w(sep)
-    w(f"  seed             : {args.seed}")
-    w(f"  k                : {k}")
-    w(f"  n                : {n}")
-    w(f"  n_blocks         : {args.n_blocks}")
-    w(f"  shots_per_block  : {args.shots_per_block}")
-    w(f"  target_depth     : {args.target_depth}")
-    w(f"  obfuscation mode : fixed (target qubit positions constant across blocks)")
+    total_blocks = args.n_blocks + args.num_red_herring_blocks
+    w(f"  seed                   : {args.seed}")
+    w(f"  k                      : {k}")
+    w(f"  n                      : {n}")
+    w(f"  n_blocks               : {args.n_blocks}")
+    w(f"  num_red_herring_blocks : {args.num_red_herring_blocks}")
+    w(f"  total_blocks           : {total_blocks}")
+    w(f"  shots_per_block        : {args.shots_per_block}")
+    w(f"  target_depth           : {args.target_depth}")
+    w(f"  obfuscation mode       : fixed (target qubit positions constant across blocks)")
     w("")
 
     # -------------------------------------------------------------------------
@@ -127,13 +133,7 @@ def main() -> None:
     w("TRUE TARGET")
     w(sep)
     w(f"  Target qubit positions (0-indexed, MSB-first): {list(true_subset_ordered)}")
-    w(f"  Fixed across all {args.n_blocks} blocks.")
-    w("")
-    w("  TARGET CIRCUIT (Qiskit gate-level description):")
-    w(f"  Depth: {target_circuit.depth()}  |  Gates: {target_circuit.count_ops()}")
-    w("")
-    for line in str(target_circuit).splitlines():
-        w(f"    {line}")
+    w(f"  Fixed across all {args.n_blocks} real blocks ({args.num_red_herring_blocks} red herring blocks interleaved).")
     w("")
     w(f"  p* — EXACT THEORETICAL distribution from statevector simulation ({2**k} bins).")
     w(f"  This is the infinite-shot oracle: what the circuit produces with certainty.")
@@ -160,15 +160,16 @@ def main() -> None:
     w("  " + thin)
 
     powers = 1 << np.arange(k - 1, -1, -1)
-    for b in range(args.n_blocks):
+    for b in range(total_blocks):
+        rh_label = " [RH]" if rh_mask[b] else "     "
         for s in range(args.shots_per_block):
             row = bitstrings[b, s]
             bits_str = "".join(f"{row[q]}    " for q in range(n))
             target_bits = row[list(true_subset_ordered)]
-            target_str = "".join(str(b) for b in target_bits)
+            target_str = "".join(str(bit) for bit in target_bits)
             decimal = int(target_bits @ powers)
-            w(f"  {b:>5} {s:>4}  {bits_str}  {target_str}         {decimal:>7}")
-        if b < args.n_blocks - 1:
+            w(f"  {b:>5}{rh_label} {s:>4}  {bits_str}  {target_str}         {decimal:>7}")
+        if b < total_blocks - 1:
             w("")  # blank line between blocks for readability
 
     w("")
@@ -212,7 +213,7 @@ def main() -> None:
     w(sep)
     w("DISTRIBUTION COMPARISON")
     w("  p*           : exact theoretical distribution (statevector, infinite-shot oracle)")
-    w(f"  p_hat_marg   : empirical marginal over oracle qubit positions ({args.n_blocks * args.shots_per_block} shots, noisy estimate of p*)")
+    w(f"  p_hat_marg   : empirical marginal over oracle qubit positions ({total_blocks * args.shots_per_block} shots incl. RH, noisy estimate of p*)")
     w("  p_hat_base   : baseline estimate (no oracle position knowledge)")
     if correct:
         w("  All three distributions share the same bin basis (MSB-first qubit ordering).")
